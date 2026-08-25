@@ -4,6 +4,16 @@ GitComet supports built-in themes and user-provided custom themes.
 
 Built-in themes are embedded in the GitComet binary.
 
+`SourceTree Familiar Light` is a bundled colour theme measured from the
+SourceTree macOS reference: white content, `#eef1f2` chrome, `#e2e4e5` side
+panels and the native `#2962d9` blue selection. Select it under
+`Settings > General > Theme`. History spacing is deliberately not baked into a
+colour theme: select `SourceTree` under
+`Settings > Git Log > History appearance profile`, then choose `System Default`
+under `Settings > General > UI Font` for the native macOS typeface. Highlight
+strength and merge/stash symbols remain independent, so this visual starting
+point can be adjusted without losing GitComet's coloured graph lanes.
+
 GitComet loads custom themes from JSON bundle files in your per-user themes directory.
 
 ## Theme File Location

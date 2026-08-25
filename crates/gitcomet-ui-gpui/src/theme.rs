@@ -2787,6 +2787,25 @@ mod tests {
     }
 
     #[test]
+    fn built_in_sourcetree_familiar_theme_keeps_measured_reference_colors() {
+        let theme = AppTheme::from_key("sourcetree_familiar_light")
+            .expect("SourceTree Familiar Light theme should load");
+
+        assert!(!theme.is_dark);
+        assert_eq!(theme.colors.surface.canvas, gpui::rgba(0xffffffff));
+        assert_eq!(theme.colors.surface.chrome, gpui::rgba(0xeef1f2ff));
+        assert_eq!(theme.colors.surface.panel, gpui::rgba(0xe2e4e5ff));
+        assert_eq!(
+            theme.colors.interaction.selected_background,
+            gpui::rgba(0x2962d9ff)
+        );
+        assert_eq!(
+            theme_label("sourcetree_familiar_light"),
+            Some("SourceTree Familiar Light".to_string())
+        );
+    }
+
+    #[test]
     fn bundled_themes_keep_the_canvas_and_chrome_hierarchy_for_their_appearance() {
         assert_eq!(
             AppTheme::gitcomet_light().colors.surface.canvas,
@@ -2803,6 +2822,9 @@ mod tests {
             "Sunset Veil should use a warm light-orange canvas"
         );
 
+        // SourceTree deliberately uses a darker sidebar (`panel`) under a
+        // lighter toolbar (`chrome`), matching the measured macOS reference,
+        // so it does not share GitComet's bundled-light surface ordering.
         for key in ["gitcomet_light", "sunset_veil"] {
             let theme = AppTheme::from_key(key).expect("light theme should load");
             let colors = theme.colors;
@@ -2836,7 +2858,7 @@ mod tests {
 
     #[test]
     fn bundled_light_theme_foregrounds_have_strong_canvas_contrast() {
-        for key in ["gitcomet_light", "sunset_veil"] {
+        for key in ["gitcomet_light", "sunset_veil", "sourcetree_familiar_light"] {
             let theme = AppTheme::from_key(key).expect("light theme should load");
             let colors = theme.colors;
             let canvas = colors.surface.canvas;
