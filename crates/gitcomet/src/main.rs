@@ -19,6 +19,7 @@ mod git_root;
 ))]
 mod linux_wayland_fallback;
 mod mergetool_mode;
+mod review_mode;
 mod setup_mode;
 
 use cli::{AppMode, exit_code};
@@ -80,6 +81,20 @@ impl AppRunResult for mergetool_mode::MergetoolRunResult {
 }
 
 impl AppRunResult for extract_fixtures_mode::ExtractMergeFixturesRunResult {
+    fn stdout(&self) -> &str {
+        &self.stdout
+    }
+
+    fn stderr(&self) -> &str {
+        &self.stderr
+    }
+
+    fn exit_code(&self) -> i32 {
+        self.exit_code
+    }
+}
+
+impl AppRunResult for review_mode::ReviewRunResult {
     fn stdout(&self) -> &str {
         &self.stdout
     }
@@ -319,6 +334,7 @@ fn main() {
         AppMode::ExtractMergeFixtures(config) => {
             run_and_exit(extract_fixtures_mode::run_extract_merge_fixtures(&config))
         }
+        AppMode::Review(args) => run_and_exit(review_mode::run_review(&args)),
     }
 }
 
@@ -834,6 +850,13 @@ mod tests {
                 output_dir: std::path::PathBuf::from("/tmp/out"),
                 max_merges: 10,
                 max_files_per_merge: 5,
+            })
+        ));
+        assert!(!mode_uses_configured_git_executable_preference(
+            &AppMode::Review(cli::ReviewArgs {
+                repo: std::path::PathBuf::from("/tmp/repo"),
+                expect_revision: None,
+                action: cli::ReviewAction::List,
             })
         ));
     }

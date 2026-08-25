@@ -3200,3 +3200,88 @@ fn extract_merge_fixtures_rejects_zero_limits() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn review_create_session_parses_machine_friendly_endpoint_arguments() {
+    let mode = parse_mode_for_test(
+        vec![
+            "gitcomet".into(),
+            "review".into(),
+            "--repo".into(),
+            "/tmp/repo".into(),
+            "--expect-revision".into(),
+            "7".into(),
+            "create-session".into(),
+            "--id".into(),
+            "review-1".into(),
+            "--title".into(),
+            "Agent review".into(),
+            "--base".into(),
+            "commit:origin/develop".into(),
+            "--head".into(),
+            "worktree:/tmp/agent-worktree".into(),
+        ],
+        &TestEnv::new(),
+    )
+    .expect("review mode parses");
+
+    assert!(matches!(
+        mode,
+        AppMode::Review(ReviewArgs {
+            repo,
+            expect_revision: Some(7),
+            action: ReviewAction::CreateSession { id, title, base, head },
+        }) if repo == PathBuf::from("/tmp/repo")
+            && id == "review-1"
+            && title == "Agent review"
+            && base == "commit:origin/develop"
+            && head == "worktree:/tmp/agent-worktree"
+    ));
+}
+
+#[test]
+fn review_add_comment_parses_line_anchor_and_author() {
+    let mode = parse_mode_for_test(
+        vec![
+            "gitcomet".into(),
+            "review".into(),
+            "add-comment".into(),
+            "review-1".into(),
+            "--id".into(),
+            "comment-1".into(),
+            "--path".into(),
+            "src/main.rs".into(),
+            "--side".into(),
+            "new".into(),
+            "--new-line".into(),
+            "42".into(),
+            "--author".into(),
+            "Codex".into(),
+            "--author-kind".into(),
+            "codex".into(),
+            "--body".into(),
+            "Please handle the error".into(),
+        ],
+        &TestEnv::new(),
+    )
+    .expect("comment mode parses");
+
+    let AppMode::Review(ReviewArgs {
+        action:
+            ReviewAction::AddComment {
+                session_id,
+                id,
+                side,
+                new_line,
+                ..
+            },
+        ..
+    }) = mode
+    else {
+        panic!("expected review add-comment mode")
+    };
+    assert_eq!(session_id, "review-1");
+    assert_eq!(id, "comment-1");
+    assert_eq!(side, Some(ReviewCommentSide::New));
+    assert_eq!(new_line, Some(42));
+}

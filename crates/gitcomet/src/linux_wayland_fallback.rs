@@ -162,9 +162,10 @@ fn app_mode_uses_gpui(mode: &AppMode) -> bool {
         AppMode::Browser { .. } => true,
         AppMode::Difftool(config) => config.gui,
         AppMode::Mergetool(config) => config.gui,
-        AppMode::Setup { .. } | AppMode::Uninstall { .. } | AppMode::ExtractMergeFixtures(_) => {
-            false
-        }
+        AppMode::Setup { .. }
+        | AppMode::Uninstall { .. }
+        | AppMode::ExtractMergeFixtures(_)
+        | AppMode::Review(_) => false,
     }
 }
 

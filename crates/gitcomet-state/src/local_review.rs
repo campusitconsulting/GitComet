@@ -183,16 +183,17 @@ impl LocalReviewStore {
         status: ReviewStatus,
         updated_at_unix_ms: i64,
     ) -> bool {
-        let Some(comment) = self
+        let Some(session) = self
             .sessions
             .iter_mut()
             .find(|session| session.id == session_id)
-            .and_then(|session| {
-                session
-                    .comments
-                    .iter_mut()
-                    .find(|comment| comment.id == comment_id)
-            })
+        else {
+            return false;
+        };
+        let Some(comment) = session
+            .comments
+            .iter_mut()
+            .find(|comment| comment.id == comment_id)
         else {
             return false;
         };
@@ -201,6 +202,7 @@ impl LocalReviewStore {
         }
         comment.status = status;
         comment.updated_at_unix_ms = updated_at_unix_ms;
+        session.updated_at_unix_ms = session.updated_at_unix_ms.max(updated_at_unix_ms);
         self.bump_revision();
         true
     }

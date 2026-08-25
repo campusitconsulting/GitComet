@@ -66,16 +66,63 @@ makes the anchor file-level.
 
 ## Agent workflow
 
-1. Resolve the repository common directory with
-   `git rev-parse --path-format=absolute --git-common-dir`.
-2. Read `gitcomet/reviews-v1.json`; a missing file means an empty store.
-3. Select the requested session and process only comments whose status is
+The supported integration surface is the `gitcomet review` JSON CLI. It finds
+the same store from the main checkout, a linked worktree, or a directory inside
+either one:
+
+```sh
+# Read the store and its current revision.
+gitcomet review --repo /path/to/worktree list
+
+# Bare revisions and commit:<revision> are resolved to immutable full OIDs.
+# worktree:<path> records the canonical path and its current HEAD.
+gitcomet review --repo /path/to/worktree create-session \
+  --id review-payroll-lock \
+  --title "Payroll advisory lock" \
+  --base origin/develop \
+  --head worktree:/path/to/agent-worktree
+
+gitcomet review --repo /path/to/worktree show review-payroll-lock
+
+gitcomet review --repo /path/to/worktree --expect-revision 1 add-comment \
+  review-payroll-lock \
+  --id comment-01 \
+  --path apps/api/payroll.py \
+  --side new --new-line 42 \
+  --context-hash sha256:... \
+  --author Codex --author-kind codex \
+  --body "This retry path can enqueue the payment twice."
+
+gitcomet review --repo /path/to/worktree --expect-revision 2 resolve-comment \
+  review-payroll-lock comment-01
+```
+
+Every successful command writes one JSON document to stdout. `list` returns
+the root store. `show` returns `{schema_version, revision, session}`; mutation
+commands return the changed session or comment together with the resulting
+`revision`. Errors go to stderr and use GitComet's error exit code (`2`). IDs
+are deliberately caller-supplied so agents can use stable, meaningful values
+and retries cannot silently create duplicates.
+
+Mutations acquire `<git-common-dir>/gitcomet/reviews-v1.lock`, then re-read the
+store before changing it. The optional `--expect-revision` check runs while
+that lock is held. Cooperating agents should pass the revision from their last
+read; a mismatch fails without writing and tells the agent to re-read and
+retry. A lock older than 30 seconds is treated as abandoned, and lock waits are
+bounded to five seconds. The final JSON is still written by temporary file,
+`fsync`, and atomic rename.
+
+Recommended workflow:
+
+1. Run `gitcomet review --repo <worktree> list`.
+2. Select the requested session and process only comments whose status is
    `open`.
-4. Apply code changes in the relevant worktree.
-5. Update comment status/body/timestamp through Git Browser's CRUD API (the CLI
-   surface is the next integration layer), preserving stable ids.
-6. Re-read `revision` before writing if the agent edits the JSON directly. The
-   application writes through a temporary file and atomic rename, so readers
-   never observe partial JSON; direct writers must do the same.
+3. Apply code changes in the relevant worktree.
+4. Resolve handled comments with `--expect-revision <last-read-revision>`.
+5. If the revision changed, re-read and reconcile before retrying.
+
+Direct JSON editing is unsupported. A non-CLI consumer must implement the same
+locking, revision check, temporary-file write, `fsync`, and atomic rename
+protocol or it can overwrite another agent's update.
 
 Agents should not rewrite unknown fields or downgrade `schema_version`.

@@ -1,12 +1,13 @@
 //! CLI argument parsing for gitcomet.
 //!
-//! Supports six modes:
+//! Supports seven modes:
 //! - Default (no subcommand): open the full repository browser
 //! - `difftool`: focused diff view, compatible with `git difftool`
 //! - `mergetool`: focused merge view, compatible with `git mergetool`
 //! - `setup`: configure git difftool/mergetool integration
 //! - `uninstall`: remove gitcomet difftool/mergetool integration
 //! - `extract-merge-fixtures`: generate Phase 3C real-world merge fixtures
+//! - `review`: manage provider-independent local review sessions as JSON
 
 use clap::{Parser, Subcommand};
 use gitcomet_core::merge::{ConflictStyle, DEFAULT_MARKER_SIZE, DiffAlgorithm};
@@ -51,6 +52,87 @@ pub enum Command {
     Uninstall(UninstallArgs),
     /// Extract non-trivial merge cases from git history as fixture files.
     ExtractMergeFixtures(ExtractMergeFixturesArgs),
+    /// Manage repository-local review sessions and comments.
+    Review(ReviewArgs),
+}
+
+#[derive(clap::Args, Clone, Debug, Eq, PartialEq)]
+pub struct ReviewArgs {
+    /// Repository or linked worktree used to locate the shared review store.
+    #[arg(long, default_value = ".")]
+    pub repo: PathBuf,
+    /// Reject the operation unless the store still has this revision.
+    ///
+    /// Mutating commands check this while holding the CLI writer lock, which
+    /// prevents lost updates between cooperating agents.
+    #[arg(long)]
+    pub expect_revision: Option<u64>,
+    #[command(subcommand)]
+    pub action: ReviewAction,
+}
+
+#[derive(Subcommand, Clone, Debug, Eq, PartialEq)]
+pub enum ReviewAction {
+    /// Print the complete local review store.
+    List,
+    /// Print one review session.
+    Show {
+        /// Stable review session id.
+        session_id: String,
+    },
+    /// Create a review session between two commit or worktree endpoints.
+    CreateSession {
+        /// Stable id chosen by the caller.
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        title: String,
+        /// `commit:<rev>` (or a bare revision) or `worktree:<path>`.
+        #[arg(long)]
+        base: String,
+        /// `commit:<rev>` (or a bare revision) or `worktree:<path>`.
+        #[arg(long)]
+        head: String,
+    },
+    /// Add a file-level or line-level comment to a session.
+    AddComment {
+        /// Stable review session id.
+        session_id: String,
+        /// Stable comment id chosen by the caller.
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        path: PathBuf,
+        /// Diff side. Omit for a file-level comment.
+        #[arg(long, value_enum)]
+        side: Option<ReviewCommentSide>,
+        #[arg(long)]
+        old_line: Option<u32>,
+        #[arg(long)]
+        new_line: Option<u32>,
+        #[arg(long)]
+        context_hash: Option<String>,
+        #[arg(long)]
+        author: String,
+        /// Stable author type such as `human`, `codex`, or `claude`.
+        #[arg(long)]
+        author_kind: String,
+        #[arg(long)]
+        body: String,
+    },
+    /// Mark an existing comment resolved.
+    ResolveComment {
+        /// Stable review session id.
+        session_id: String,
+        /// Stable comment id.
+        comment_id: String,
+    },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReviewCommentSide {
+    Old,
+    New,
 }
 
 #[derive(clap::Args, Debug)]
@@ -227,6 +309,8 @@ pub enum AppMode {
     Uninstall { dry_run: bool, local: bool },
     /// Generate merge fixtures from repository history.
     ExtractMergeFixtures(ExtractMergeFixturesConfig),
+    /// Read or mutate local provider-independent review data.
+    Review(ReviewArgs),
 }
 
 // ── Environment lookup trait for testability ─────────────────────────
@@ -680,6 +764,10 @@ fn parse_app_mode_from_args_env_and_config(
             }),
             Some(Command::ExtractMergeFixtures(args)) => {
                 resolve_extract_merge_fixtures(args).map(AppMode::ExtractMergeFixtures)
+            }
+            Some(Command::Review(args)) => {
+                require_non_empty_path(args.repo.clone(), "repository")?;
+                Ok(AppMode::Review(args))
             }
         },
         Err(clap_err) => {
