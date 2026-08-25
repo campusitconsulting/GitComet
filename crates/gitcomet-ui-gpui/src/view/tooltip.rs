@@ -166,6 +166,8 @@ impl GitCometView {
                             .history_highlight_strength_percent(cx);
                         let history_graph_node_style =
                             this.main_pane.read(cx).history_graph_node_style(cx);
+                        let history_graph_style =
+                            this.main_pane.read(cx).history_graph_style(cx);
                         let (
                             mergetool_auto_advance,
                             mergetool_collapse_unchanged,
@@ -241,6 +243,7 @@ impl GitCometView {
                                 history_highlight_strength_percent,
                             ),
                             history_graph_node_style: Some(history_graph_node_style),
+                            history_graph_style: Some(history_graph_style),
                             terminal_external_mode: None,
                             terminal_external_program: None,
                             terminal_external_args: None,

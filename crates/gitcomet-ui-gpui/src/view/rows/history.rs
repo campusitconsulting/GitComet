@@ -2897,6 +2897,8 @@ impl HistoryView {
         let col_date = this.history_col_date;
         let col_sha = this.history_col_sha;
         let ui_scale = this.ui_scale();
+        let graph_metrics =
+            crate::view::history_graph_style::history_graph_metrics(this.history_graph_style);
         let (show_graph, show_author, show_date, show_sha) = this.history_visible_columns();
         let display_key = HistoryDisplayKey::new(
             this.date_time_format,
@@ -2953,6 +2955,7 @@ impl HistoryView {
                         show_author,
                         show_date,
                         show_sha,
+                        graph_metrics,
                         graph_row,
                         visible_ix,
                         connect_from_top_col,
@@ -2985,6 +2988,7 @@ impl HistoryView {
                         show_author,
                         show_date,
                         show_sha,
+                        graph_metrics,
                         worktree_node_color_ix,
                         selected_lane,
                         show_graph_color_marker,
@@ -3048,6 +3052,7 @@ impl HistoryView {
                     show_author,
                     show_date,
                     show_sha,
+                    graph_metrics,
                     show_graph_color_marker,
                     list_ix,
                     repo.id,
@@ -3075,9 +3080,6 @@ impl HistoryView {
     }
 }
 
-// Measured from the SourceTree Retina reference: commit centres repeat every
-// 40 physical pixels, i.e. a 20-point row at 2x.
-const HISTORY_ROW_HEIGHT_PX: f32 = 20.0;
 /// Widest a worktree row's badge may grow before its branch label truncates.
 /// Matches the sidebar's branch-row worktree pill.
 const HISTORY_WORKTREE_BADGE_MAX_W_PX: f32 = 200.0;
@@ -3118,8 +3120,11 @@ fn history_message_border(ui_scale: ui_scale::UiScale, color: gpui::Rgba) -> imp
         .bg(color)
 }
 
-fn history_row_height(ui_scale: ui_scale::UiScale) -> Pixels {
-    ui_scale.px(HISTORY_ROW_HEIGHT_PX)
+fn history_row_height(
+    ui_scale: ui_scale::UiScale,
+    metrics: crate::view::history_graph_style::HistoryGraphMetrics,
+) -> Pixels {
+    ui_scale.px(metrics.row_height)
 }
 
 fn history_scope_shows_graph_color_marker(scope: gitcomet_core::domain::LogScope) -> bool {
@@ -3139,6 +3144,7 @@ fn history_table_row(
     show_author: bool,
     show_date: bool,
     show_sha: bool,
+    graph_metrics: crate::view::history_graph_style::HistoryGraphMetrics,
     show_graph_color_marker: bool,
     ix: usize,
     repo_id: RepoId,
@@ -3222,7 +3228,7 @@ fn history_table_row(
     );
 
     let commit_id = commit.id.clone();
-    let row_height = history_row_height(ui_scale);
+    let row_height = history_row_height(ui_scale, graph_metrics);
     let mut row = div()
         .id(ix)
         .debug_selector(move || format!("history_row_{ix}"))
@@ -3312,6 +3318,7 @@ fn worktree_uncommitted_history_row(
     show_author: bool,
     show_date: bool,
     show_sha: bool,
+    graph_metrics: crate::view::history_graph_style::HistoryGraphMetrics,
     graph_row: &history_graph::GraphRow,
     // Index of the commit row the band sits on top of, whose lanes it draws.
     visible_ix: usize,
@@ -3377,6 +3384,7 @@ fn worktree_uncommitted_history_row(
                 visible_ix,
                 connect_from_top_col,
                 selected_lane,
+                graph_metrics,
                 super::history_graph_paint::BandNodePaint {
                     col: band_node.col,
                     color: node_color,
@@ -3471,7 +3479,7 @@ fn worktree_uncommitted_history_row(
     let select_path = summary.path.clone();
     let mut row = div()
         .id(("history_worktree_uncommitted", list_ix))
-        .h(history_row_height(ui_scale))
+        .h(history_row_height(ui_scale, graph_metrics))
         .flex()
         .w_full()
         .items_center()
@@ -3557,6 +3565,7 @@ fn working_tree_summary_history_row(
     show_author: bool,
     show_date: bool,
     show_sha: bool,
+    graph_metrics: crate::view::history_graph_style::HistoryGraphMetrics,
     node_color_ix: history_graph::LaneColorIx,
     selected_lane: Option<super::history_graph_paint::SelectedLane>,
     show_graph_color_marker: bool,
@@ -3635,8 +3644,8 @@ fn working_tree_summary_history_row(
             use gpui::{PathBuilder, point};
             let design_scale_factor = ui_scale::design_scale_factor_from_window(window);
             let scaled_px = |value| px(value * design_scale_factor);
-            let margin_x = scaled_px(HISTORY_GRAPH_MARGIN_X_PX);
-            let col_gap = scaled_px(HISTORY_GRAPH_COL_GAP_PX);
+            let margin_x = scaled_px(graph_metrics.margin_x);
+            let col_gap = scaled_px(graph_metrics.lane_pitch);
             let node_x = margin_x + col_gap * 0.0;
             let center = point(
                 bounds.left() + node_x,
@@ -3644,7 +3653,7 @@ fn working_tree_summary_history_row(
             );
 
             // Connect the working tree node into the history graph below.
-            let stroke_width = scaled_px(HISTORY_GRAPH_STROKE_WIDTH_PX);
+            let stroke_width = scaled_px(graph_metrics.stroke_width);
             let mut path = PathBuilder::stroke(stroke_width);
             path.move_to(point(center.x, center.y));
             path.line_to(point(center.x, bounds.bottom()));
@@ -3667,6 +3676,7 @@ fn working_tree_summary_history_row(
                 icons::UNCOMMITTED_NODE_ICON_PATH,
                 node_color,
                 node_background,
+                graph_metrics,
                 window,
                 cx,
             );
@@ -3678,7 +3688,7 @@ fn working_tree_summary_history_row(
 
     let mut row = div()
         .id(("history_worktree_summary", repo_id.0))
-        .h(history_row_height(ui_scale))
+        .h(history_row_height(ui_scale, graph_metrics))
         .flex()
         .w_full()
         .items_center()

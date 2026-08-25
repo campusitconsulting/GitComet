@@ -163,6 +163,7 @@ mod file_diff_display;
 mod file_icons;
 mod fingerprint;
 mod history_graph;
+mod history_graph_style;
 pub(crate) mod history_mode;
 mod history_refs_hover;
 mod icons;
@@ -292,17 +293,6 @@ const HISTORY_COL_MESSAGE_MIN_PX: f32 = 220.0;
 const ERROR_BANNER_OVERFLOW_HINT_MIN_LINES: usize = 8;
 const ERROR_BANNER_OVERFLOW_HINT_MIN_CHARS: usize = 240;
 
-// Measured from the 144dpi SourceTree reference screenshot: adjacent lane
-// centres are 22 physical pixels apart, i.e. 11 logical points at 2x Retina.
-const HISTORY_GRAPH_COL_GAP_PX: f32 = 11.0;
-const HISTORY_GRAPH_MARGIN_X_PX: f32 = 11.0;
-// The same reference uses a compact rounded turn, about 5 logical points.
-const HISTORY_GRAPH_ELBOW_RADIUS_PX: f32 = 5.0;
-// Four physical pixels at 2x Retina.
-const HISTORY_GRAPH_STROKE_WIDTH_PX: f32 = 2.0;
-// Ordinary SourceTree commit dots measure 14x14 physical pixels at 2x Retina.
-const HISTORY_GRAPH_NODE_RADIUS_PX: f32 = 3.5;
-
 /// Width of the lane-coloured wash at the right edge of the graph column. It
 /// fades from transparent into the border on the message cell, tying a commit's
 /// dot to its message.
@@ -348,6 +338,9 @@ const COLLAPSED_POPOVER_FADE_MS: u64 = 110;
 const SIDEBAR_MIN_PX: f32 = 200.0;
 const DETAILS_MIN_PX: f32 = 280.0;
 const MAIN_MIN_PX: f32 = 280.0;
+const REVIEW_SPLIT_HANDLE_PX: f32 = 8.0;
+const REVIEW_HISTORY_MIN_HEIGHT_PX: f32 = 150.0;
+const REVIEW_LOWER_MIN_HEIGHT_PX: f32 = 180.0;
 
 const DIFF_SPLIT_COL_MIN_PX: f32 = 160.0;
 
@@ -1452,6 +1445,9 @@ impl GitCometView {
         let history_graph_node_style = ui_session
             .history_graph_node_style
             .unwrap_or(gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons);
+        let history_graph_style = ui_session
+            .history_graph_style
+            .unwrap_or(gitcomet_state::session::HistoryGraphStylePreset::SourceTree);
         let history_show_tags = ui_session.history_show_tags.unwrap_or(true);
         let history_tag_fetch_mode = ui_session.history_tag_fetch_mode.unwrap_or_default();
         let default_tag_type = ui_session.default_tag_type.unwrap_or_default();
@@ -1590,6 +1586,7 @@ impl GitCometView {
                 history_highlight_commit_chain,
                 history_highlight_strength_percent,
                 history_graph_node_style,
+                history_graph_style,
                 diff_scroll_sync,
                 diff_content_mode,
                 diff_whitespace_mode,
@@ -1920,6 +1917,8 @@ impl GitCometView {
             theme: initial_theme,
             workspace_layout,
             review_split_percent,
+            review_workspace_bounds_ref: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            review_split_resize: None,
             title_bar,
             sidebar_pane,
             main_pane,
@@ -2607,6 +2606,17 @@ impl GitCometView {
     ) {
         self.main_pane
             .update(cx, |pane, cx| pane.set_history_graph_node_style(style, cx));
+        self.schedule_ui_settings_persist(cx);
+        cx.notify();
+    }
+
+    pub(in crate::view) fn set_history_graph_style(
+        &mut self,
+        style: gitcomet_state::session::HistoryGraphStylePreset,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.main_pane
+            .update(cx, |pane, cx| pane.set_history_graph_style(style, cx));
         self.schedule_ui_settings_persist(cx);
         cx.notify();
     }

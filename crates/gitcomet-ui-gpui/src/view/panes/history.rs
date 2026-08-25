@@ -1021,6 +1021,7 @@ pub(in super::super) struct HistoryView {
     pub(in super::super) history_highlight_commit_chain: bool,
     pub(in super::super) history_highlight_strength_percent: u8,
     pub(in super::super) history_graph_node_style: gitcomet_state::session::HistoryGraphNodeStyle,
+    pub(in super::super) history_graph_style: gitcomet_state::session::HistoryGraphStylePreset,
     _ui_model_subscription: gpui::Subscription,
     root_view: WeakEntity<GitCometView>,
     notify_fingerprint: u64,
@@ -1115,6 +1116,7 @@ impl HistoryView {
         history_highlight_commit_chain: bool,
         history_highlight_strength_percent: u8,
         history_graph_node_style: gitcomet_state::session::HistoryGraphNodeStyle,
+        history_graph_style: gitcomet_state::session::HistoryGraphStylePreset,
         history_show_graph: bool,
         history_show_author: bool,
         history_show_date: bool,
@@ -1170,6 +1172,7 @@ impl HistoryView {
             history_highlight_commit_chain,
             history_highlight_strength_percent,
             history_graph_node_style,
+            history_graph_style,
             _ui_model_subscription: subscription,
             root_view,
             notify_fingerprint: initial_fingerprint,
@@ -1688,6 +1691,34 @@ impl HistoryView {
             return;
         }
         self.history_graph_node_style = style;
+        cx.notify();
+    }
+
+    pub(in super::super) fn set_history_graph_style(
+        &mut self,
+        style: gitcomet_state::session::HistoryGraphStylePreset,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.history_graph_style == style {
+            return;
+        }
+        self.history_graph_style = style;
+        self.history_col_graph_auto = true;
+        self.history_col_resize = None;
+        if let Some(cache) = self.history_cache.as_ref() {
+            let metrics = crate::view::history_graph_style::history_graph_metrics(style);
+            let required = history_scaled_px(
+                metrics.margin_x * 2.0 + metrics.lane_pitch * cache.base.max_lanes as f32,
+                self.ui_scale_percent,
+            );
+            self.history_col_graph = required.min(history_scaled_px(
+                HISTORY_COL_GRAPH_MAX_PX,
+                self.ui_scale_percent,
+            ));
+            self.history_col_graph_design = self
+                .ui_scale()
+                .design_units_from_pixels(self.history_col_graph);
+        }
         cx.notify();
     }
 
@@ -2468,9 +2499,12 @@ impl HistoryView {
                     }
 
                     if this.history_col_graph_auto && this.history_col_resize.is_none() {
+                        let metrics = crate::view::history_graph_style::history_graph_metrics(
+                            this.history_graph_style,
+                        );
                         let required = history_scaled_px(
-                            HISTORY_GRAPH_MARGIN_X_PX * 2.0
-                                + HISTORY_GRAPH_COL_GAP_PX * (rebuild.base.max_lanes as f32),
+                            metrics.margin_x * 2.0
+                                + metrics.lane_pitch * rebuild.base.max_lanes as f32,
                             this.ui_scale_percent,
                         );
                         if this.history_show_graph {

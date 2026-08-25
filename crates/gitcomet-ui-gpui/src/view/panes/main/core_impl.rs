@@ -1333,6 +1333,7 @@ impl MainPaneView {
         history_highlight_commit_chain: bool,
         history_highlight_strength_percent: u8,
         history_graph_node_style: gitcomet_state::session::HistoryGraphNodeStyle,
+        history_graph_style: gitcomet_state::session::HistoryGraphStylePreset,
         diff_scroll_sync: DiffScrollSync,
         diff_content_mode: DiffContentMode,
         diff_whitespace_mode: DiffWhitespaceMode,
@@ -1580,6 +1581,7 @@ impl MainPaneView {
                 history_highlight_commit_chain,
                 history_highlight_strength_percent,
                 history_graph_node_style,
+                history_graph_style,
                 history_show_graph,
                 history_show_author,
                 history_show_date,
@@ -3855,6 +3857,23 @@ impl MainPaneView {
         cx: &App,
     ) -> gitcomet_state::session::HistoryGraphNodeStyle {
         self.history_view.read(cx).history_graph_node_style
+    }
+
+    pub(in crate::view) fn set_history_graph_style(
+        &mut self,
+        style: gitcomet_state::session::HistoryGraphStylePreset,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.history_view
+            .update(cx, |view, cx| view.set_history_graph_style(style, cx));
+        cx.notify();
+    }
+
+    pub(in crate::view) fn history_graph_style(
+        &self,
+        cx: &App,
+    ) -> gitcomet_state::session::HistoryGraphStylePreset {
+        self.history_view.read(cx).history_graph_style
     }
 
     pub(in crate::view) fn set_history_relative_dates(

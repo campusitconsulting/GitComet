@@ -21,6 +21,49 @@ const CONTENT_CARD_BOTTOM_MARGIN_PX: f32 = 2.0;
 const COLLAPSED_POPOVER_WIDTH_PX: f32 = 340.0;
 static SPLASH_BACKDROP_IMAGE_CACHE: OnceLock<Arc<gpui::Image>> = OnceLock::new();
 
+fn review_available_height(total_height: Pixels, handle_height: Pixels) -> Pixels {
+    (total_height - handle_height).max(px(0.0))
+}
+
+fn clamp_review_history_height(
+    requested: Pixels,
+    available: Pixels,
+    min_history: Pixels,
+    min_lower: Pixels,
+) -> Pixels {
+    let available = available.max(px(0.0));
+    let minimum_sum = min_history + min_lower;
+    if available < minimum_sum {
+        if minimum_sum <= px(0.0) {
+            return px(0.0);
+        }
+        return available * (f32::from(min_history) / f32::from(minimum_sum));
+    }
+
+    requested.max(min_history).min(available - min_lower)
+}
+
+fn review_history_height_from_percent(
+    percent: u16,
+    available: Pixels,
+    min_history: Pixels,
+    min_lower: Pixels,
+) -> Pixels {
+    let requested = available * (f32::from(percent.min(100)) / 100.0);
+    clamp_review_history_height(requested, available, min_history, min_lower)
+}
+
+fn review_split_percent_from_height(history_height: Pixels, available: Pixels) -> u16 {
+    if available <= px(0.0) {
+        return 0;
+    }
+    ((f32::from(history_height) / f32::from(available) * 100.0).round() as u16).min(100)
+}
+
+fn review_workspace_bounds_probe() -> gpui::Div {
+    div().absolute().top_0().left_0().size_full()
+}
+
 /// Corner radius of the main content card — squarer than the shared `panel`
 /// radius the floating dialogs and splash cards keep. This surface is chrome
 /// fused to the tab strip above it and the sidebar beside it, not a card
@@ -1133,6 +1176,111 @@ impl GitCometView {
             .into_any_element()
     }
 
+    fn review_split_resize_handle(
+        &mut self,
+        theme: AppTheme,
+        handle_height: Pixels,
+        min_history: Pixels,
+        min_lower: Pixels,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        div()
+            .id("review_workspace_split")
+            .debug_selector(|| "review_workspace_split".to_string())
+            .group("review_workspace_split")
+            .h(handle_height)
+            .min_h(handle_height)
+            .w_full()
+            .cursor(CursorStyle::ResizeUpDown)
+            .child(components::resize_grip(
+                theme,
+                self.ui_scale_percent,
+                "review_workspace_split",
+                components::ResizeGripAxis::Horizontal,
+                self.review_split_resize.is_some(),
+                Some(theme.colors.stroke.subtle),
+            ))
+            .on_drag(ReviewSplitResizeDrag, |_payload, _offset, _window, cx| {
+                cx.new(|_cx| ResizeDragGhost)
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    crate::press_gesture::claim_press(cx);
+                    this.close_history_refs_hover(cx);
+
+                    let Some(bounds) = *this.review_workspace_bounds_ref.borrow() else {
+                        return;
+                    };
+                    let available = review_available_height(bounds.size.height, handle_height);
+                    let history_height = review_history_height_from_percent(
+                        this.review_split_percent,
+                        available,
+                        min_history,
+                        min_lower,
+                    );
+                    this.review_split_resize = Some(ReviewSplitResizeState {
+                        start_y: event.position.y,
+                        start_history_height: history_height,
+                        current_history_height: history_height,
+                        available_height: available,
+                        restore_focus: window.focused(cx),
+                    });
+                    cx.notify();
+                }),
+            )
+            .on_drag_move(cx.listener(
+                move |this, event: &gpui::DragMoveEvent<ReviewSplitResizeDrag>, _window, cx| {
+                    let Some(state) = this.review_split_resize.as_mut() else {
+                        return;
+                    };
+                    let requested =
+                        state.start_history_height + (event.event.position.y - state.start_y);
+                    let next = clamp_review_history_height(
+                        requested,
+                        state.available_height,
+                        min_history,
+                        min_lower,
+                    );
+                    if state.current_history_height == next {
+                        return;
+                    }
+                    state.current_history_height = next;
+                    this.review_split_percent =
+                        review_split_percent_from_height(next, state.available_height);
+                    cx.notify();
+                },
+            ))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _event, window, cx| {
+                    let Some(state) = this.review_split_resize.take() else {
+                        return;
+                    };
+                    if let Some(focus) = state.restore_focus {
+                        window.focus(&focus, cx);
+                    }
+                    this.schedule_ui_settings_persist(cx);
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _event, window, cx| {
+                    let Some(state) = this.review_split_resize.take() else {
+                        return;
+                    };
+                    if let Some(focus) = state.restore_focus {
+                        window.focus(&focus, cx);
+                    }
+                    this.schedule_ui_settings_persist(cx);
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+    }
+
     fn workspace_card_body(
         &mut self,
         theme: AppTheme,
@@ -1168,22 +1316,59 @@ impl GitCometView {
                 .into_any_element();
         }
 
-        let history_fraction = f32::from(self.review_split_percent) / 100.0;
+        let scale = ui_scale::UiScale::from_percent(self.ui_scale_percent);
+        let handle_height = scale.px(REVIEW_SPLIT_HANDLE_PX);
+        let min_history = scale.px(REVIEW_HISTORY_MIN_HEIGHT_PX);
+        let min_lower = scale.px(REVIEW_LOWER_MIN_HEIGHT_PX);
+        let measured_height = self
+            .review_workspace_bounds_ref
+            .borrow()
+            .as_ref()
+            .map(|bounds| bounds.size.height)
+            .unwrap_or(self.last_window_size.height);
+        let available = review_available_height(measured_height, handle_height);
+        let history_height = self
+            .review_split_resize
+            .as_ref()
+            .map(|state| state.current_history_height)
+            .unwrap_or_else(|| {
+                review_history_height_from_percent(
+                    self.review_split_percent,
+                    available,
+                    min_history,
+                    min_lower,
+                )
+            });
+        let workspace_bounds = Rc::clone(&self.review_workspace_bounds_ref);
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
+            .on_children_prepainted(move |children_bounds, window, _app| {
+                let next = children_bounds.first().copied();
+                let mut measured = workspace_bounds.borrow_mut();
+                if *measured != next {
+                    *measured = next;
+                    window.refresh();
+                }
+            })
+            .child(review_workspace_bounds_probe())
             .child(
                 div()
-                    .h(relative(history_fraction))
+                    .h(history_height)
                     .min_h(px(0.0))
+                    .max_h(history_height)
                     .overflow_hidden()
                     .child(stable_cached_fill_view(self.history_view.clone())),
             )
-            // Static boundary for the first composition checkpoint. The next
-            // slice replaces it with a drag handle backed by the persisted
-            // `review_split_percent` field.
-            .child(div().h(px(1.0)).w_full().bg(theme.colors.stroke.default))
+            .child(self.review_split_resize_handle(
+                theme,
+                handle_height,
+                min_history,
+                min_lower,
+                cx,
+            ))
             .child(
                 div()
                     .flex_1()
@@ -1381,5 +1566,69 @@ impl GitCometView {
                     .child(stable_cached_fill_view(self.main_pane.clone())),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod review_split_tests {
+    use super::*;
+
+    fn assert_px_close(actual: Pixels, expected: f32) {
+        let actual = f32::from(actual);
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "expected {expected}px, got {actual}px"
+        );
+    }
+
+    #[test]
+    fn review_split_uses_pixel_minimums_instead_of_a_percent_band() {
+        let available = review_available_height(px(2_008.0), px(8.0));
+
+        // Ten percent is valid in a tall workspace because both panes still
+        // satisfy their pixel minimums. A fixed 20..80 percent clamp would
+        // incorrectly move this boundary to 400px.
+        let height = review_history_height_from_percent(10, available, px(150.0), px(180.0));
+
+        assert_px_close(height, 200.0);
+    }
+
+    #[test]
+    fn review_split_clamps_each_side_to_its_pixel_minimum() {
+        let available = review_available_height(px(708.0), px(8.0));
+
+        let near_top = review_history_height_from_percent(1, available, px(150.0), px(180.0));
+        let near_bottom = review_history_height_from_percent(99, available, px(150.0), px(180.0));
+
+        assert_px_close(near_top, 150.0);
+        assert_px_close(near_bottom, 520.0);
+    }
+
+    #[test]
+    fn review_split_drag_height_is_clamped_by_the_opposite_pane() {
+        let available = px(900.0);
+
+        let dragged_above =
+            clamp_review_history_height(px(-500.0), available, px(150.0), px(180.0));
+        let dragged_below =
+            clamp_review_history_height(px(1_500.0), available, px(150.0), px(180.0));
+
+        assert_px_close(dragged_above, 150.0);
+        assert_px_close(dragged_below, 720.0);
+    }
+
+    #[test]
+    fn review_split_degrades_proportionally_when_both_minimums_cannot_fit() {
+        let height = clamp_review_history_height(px(170.0), px(220.0), px(150.0), px(180.0));
+
+        assert_px_close(height, 100.0);
+        assert_px_close(px(220.0) - height, 120.0);
+    }
+
+    #[test]
+    fn review_split_percent_tracks_the_clamped_pixel_position() {
+        assert_eq!(review_split_percent_from_height(px(90.0), px(900.0)), 10);
+        assert_eq!(review_split_percent_from_height(px(891.0), px(900.0)), 99);
+        assert_eq!(review_split_percent_from_height(px(10.0), px(0.0)), 0);
     }
 }

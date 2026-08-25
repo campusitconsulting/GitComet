@@ -12,6 +12,7 @@ pub(super) fn paint_history_graph(
     connect_from_top_col: Option<usize>,
     is_stash_node: bool,
     node_style: gitcomet_state::session::HistoryGraphNodeStyle,
+    metrics: crate::view::history_graph_style::HistoryGraphMetrics,
     // The lane the selected commit sits on. Every colour the graph draws goes
     // through `lane`, so that one lane stays saturated along its whole run and
     // every other lane recedes along its whole run -- a property of the lane, not
@@ -35,15 +36,12 @@ pub(super) fn paint_history_graph(
 
     let design_scale_factor = ui_scale::design_scale_factor_from_window(window);
     let scaled_px = |value| px(value * design_scale_factor);
-    let stroke_width = scaled_px(HISTORY_GRAPH_STROKE_WIDTH_PX);
-    let col_gap = scaled_px(HISTORY_GRAPH_COL_GAP_PX);
-    let margin_x = scaled_px(HISTORY_GRAPH_MARGIN_X_PX);
-    let node_radius = scaled_px(HISTORY_GRAPH_NODE_RADIUS_PX);
-    // SourceTree's ordinary commit nodes are circular. Merge, stash and
-    // worktree nodes keep GitComet's richer icon treatment below.
-    let node_corner_radius = node_radius;
-
-    let elbow_radius = scaled_px(HISTORY_GRAPH_ELBOW_RADIUS_PX);
+    let stroke_width = scaled_px(metrics.stroke_width);
+    let col_gap = scaled_px(metrics.lane_pitch);
+    let margin_x = scaled_px(metrics.margin_x);
+    let node_radius = scaled_px(metrics.node_radius);
+    let node_corner_radius = scaled_px(metrics.node_corner_radius);
+    let elbow_radius = scaled_px(metrics.elbow_radius);
 
     let y_top = bounds.top();
     let y_center = bounds.top() + bounds.size.height / 2.0;
@@ -577,6 +575,7 @@ pub(super) fn paint_history_graph_band(
     row_ix: usize,
     connect_from_top_col: Option<usize>,
     selected_lane: Option<SelectedLane>,
+    metrics: crate::view::history_graph_style::HistoryGraphMetrics,
     node: BandNodePaint,
     show_graph_color_marker: bool,
     // What the row is painted over, so the node's middle -- which has to be
@@ -596,10 +595,10 @@ pub(super) fn paint_history_graph_band(
 
     let design_scale_factor = ui_scale::design_scale_factor_from_window(window);
     let scaled_px = |value| px(value * design_scale_factor);
-    let stroke_width = scaled_px(HISTORY_GRAPH_STROKE_WIDTH_PX);
-    let col_gap = scaled_px(HISTORY_GRAPH_COL_GAP_PX);
-    let margin_x = scaled_px(HISTORY_GRAPH_MARGIN_X_PX);
-    let elbow_radius = scaled_px(HISTORY_GRAPH_ELBOW_RADIUS_PX);
+    let stroke_width = scaled_px(metrics.stroke_width);
+    let col_gap = scaled_px(metrics.lane_pitch);
+    let margin_x = scaled_px(metrics.margin_x);
+    let elbow_radius = scaled_px(metrics.elbow_radius);
 
     let left = bounds.left();
     let y_top = bounds.top();
@@ -695,6 +694,7 @@ pub(super) fn paint_history_graph_band(
             icons::UNCOMMITTED_NODE_ICON_PATH,
             node.color,
             row_background,
+            metrics,
             window,
             cx,
         );
@@ -877,14 +877,19 @@ pub(super) fn paint_ring_icon_node(
     icon_path: &'static str,
     ring_color: gpui::Rgba,
     background: gpui::Rgba,
+    metrics: crate::view::history_graph_style::HistoryGraphMetrics,
     window: &mut Window,
     cx: &mut App,
 ) {
     let design_scale_factor = ui_scale::design_scale_factor_from_window(window);
     let scaled_px = |value| px(value * design_scale_factor);
-    let diameter = scaled_px(16.0);
-    let ring_width = scaled_px(1.5);
-    let glyph = scaled_px(10.5);
+    // Worktree/uncommitted nodes remain semantically distinct rings, but follow
+    // the active graph density instead of forcing the roomy 16pt GitComet icon
+    // into SourceTree's measured 11pt lane pitch.
+    let compact = metrics.lane_pitch <= 11.0;
+    let diameter = scaled_px(if compact { 9.0 } else { 16.0 });
+    let ring_width = scaled_px(if compact { 1.25 } else { 1.5 });
+    let glyph = scaled_px(if compact { 6.0 } else { 10.5 });
 
     let disc = Bounds::new(
         point(x_center - diameter * 0.5, y_center - diameter * 0.5),
@@ -1441,10 +1446,10 @@ mod band_tests {
 mod tests {
     use super::*;
 
-    /// Measured SourceTree design geometry the radius has to sit inside: 11pt
-    /// column pitch and a 10pt half-row.
-    const COL_GAP: f32 = HISTORY_GRAPH_COL_GAP_PX;
-    const HALF_ROW: f32 = 10.0;
+    const SOURCE: crate::view::history_graph_style::HistoryGraphMetrics =
+        crate::view::history_graph_style::SOURCETREE_GRAPH_METRICS;
+    const COL_GAP: f32 = SOURCE.lane_pitch;
+    const HALF_ROW: f32 = SOURCE.row_height * 0.5;
 
     /// The auto width is `MARGIN_X * 2 + COL_GAP * max_lanes`, and a pushed-out
     /// node sits on column `max_lanes` -- exactly on the trailing margin. This
@@ -1452,8 +1457,8 @@ mod tests {
     /// outside the cell on every busiest row.
     #[test]
     fn a_pushed_out_node_fits_the_auto_sized_graph_column() {
-        let margin = px(HISTORY_GRAPH_MARGIN_X_PX);
-        let gap = px(HISTORY_GRAPH_COL_GAP_PX);
+        let margin = px(SOURCE.margin_x);
+        let gap = px(SOURCE.lane_pitch);
         for max_lanes in 1u16..14 {
             let width = margin * 2.0 + gap * f32::from(max_lanes);
             assert_eq!(
@@ -1469,8 +1474,8 @@ mod tests {
     /// overflows, so it would not be drawn at all. It has to come back inside.
     #[test]
     fn a_pushed_out_node_stays_inside_a_column_too_narrow_for_it() {
-        let margin = px(HISTORY_GRAPH_MARGIN_X_PX);
-        let gap = px(HISTORY_GRAPH_COL_GAP_PX);
+        let margin = px(SOURCE.margin_x);
+        let gap = px(SOURCE.lane_pitch);
         let clamped_width = px(crate::view::HISTORY_COL_GRAPH_MAX_PX);
 
         // More lanes than the safety maximum can hold still produce a visible
@@ -1494,8 +1499,8 @@ mod tests {
     /// to the commit below.
     #[test]
     fn a_narrow_column_clamps_the_connector_as_well_as_the_node() {
-        let margin = px(HISTORY_GRAPH_MARGIN_X_PX);
-        let gap = px(HISTORY_GRAPH_COL_GAP_PX);
+        let margin = px(SOURCE.margin_x);
+        let gap = px(SOURCE.lane_pitch);
         let x_for_col = |col: usize| margin + gap * (col as f32);
 
         // Wide enough for both: the node sits right of its exit lane, so the
@@ -1520,39 +1525,35 @@ mod tests {
 
     #[test]
     fn elbow_radius_fits_a_one_column_jog_at_normal_scale() {
-        let r = elbow_radius(px(HISTORY_GRAPH_ELBOW_RADIUS_PX), px(COL_GAP), px(HALF_ROW));
+        let r = elbow_radius(px(SOURCE.elbow_radius), px(COL_GAP), px(HALF_ROW));
         // Neither clamp binds, so the corner keeps its designed radius and
         // leaves straight runs on both sides of the turn.
-        assert_eq!(r, px(HISTORY_GRAPH_ELBOW_RADIUS_PX));
+        assert_eq!(r, px(SOURCE.elbow_radius));
         assert!(r < px(COL_GAP));
         assert!(r < px(HALF_ROW));
     }
 
     #[test]
     fn elbow_radius_clamps_to_a_short_horizontal_run() {
-        let r = elbow_radius(px(HISTORY_GRAPH_ELBOW_RADIUS_PX), px(2.0), px(HALF_ROW));
+        let r = elbow_radius(px(SOURCE.elbow_radius), px(2.0), px(HALF_ROW));
         assert_eq!(r, px(2.0));
     }
 
     #[test]
     fn elbow_radius_clamps_to_a_short_vertical_run() {
-        let r = elbow_radius(px(HISTORY_GRAPH_ELBOW_RADIUS_PX), px(COL_GAP), px(3.0));
+        let r = elbow_radius(px(SOURCE.elbow_radius), px(COL_GAP), px(3.0));
         assert_eq!(r, px(3.0));
     }
 
     #[test]
     fn elbow_radius_is_direction_agnostic_and_never_negative() {
-        let right = elbow_radius(px(HISTORY_GRAPH_ELBOW_RADIUS_PX), px(COL_GAP), px(HALF_ROW));
-        let left = elbow_radius(
-            px(HISTORY_GRAPH_ELBOW_RADIUS_PX),
-            px(-COL_GAP),
-            px(HALF_ROW),
-        );
+        let right = elbow_radius(px(SOURCE.elbow_radius), px(COL_GAP), px(HALF_ROW));
+        let left = elbow_radius(px(SOURCE.elbow_radius), px(-COL_GAP), px(HALF_ROW));
         assert_eq!(right, left);
 
         // A degenerate row would otherwise produce a corner bulging the wrong way.
         assert_eq!(
-            elbow_radius(px(HISTORY_GRAPH_ELBOW_RADIUS_PX), px(COL_GAP), px(-1.0)),
+            elbow_radius(px(SOURCE.elbow_radius), px(COL_GAP), px(-1.0)),
             px(0.0)
         );
     }

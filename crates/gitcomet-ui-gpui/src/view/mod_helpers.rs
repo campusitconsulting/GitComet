@@ -361,6 +361,17 @@ pub(super) enum PaneResizeHandle {
     Details,
 }
 
+pub(super) struct ReviewSplitResizeState {
+    pub(super) start_y: Pixels,
+    pub(super) start_history_height: Pixels,
+    pub(super) current_history_height: Pixels,
+    pub(super) available_height: Pixels,
+    pub(super) restore_focus: Option<FocusHandle>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ReviewSplitResizeDrag;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct PaneResizeState {
     pub(super) handle: PaneResizeHandle,
@@ -5621,6 +5632,8 @@ pub struct GitCometView {
     pub(super) theme: AppTheme,
     pub(super) workspace_layout: gitcomet_state::session::WorkspaceLayoutPreset,
     pub(super) review_split_percent: u16,
+    pub(super) review_workspace_bounds_ref: std::rc::Rc<std::cell::RefCell<Option<Bounds<Pixels>>>>,
+    pub(super) review_split_resize: Option<ReviewSplitResizeState>,
     pub(super) title_bar: Entity<TitleBarView>,
     pub(super) sidebar_pane: Entity<SidebarPaneView>,
     pub(super) main_pane: Entity<MainPaneView>,

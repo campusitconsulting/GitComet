@@ -542,7 +542,11 @@ pub(super) fn history_commit_row_canvas(
             }
 
             if show_graph {
-                let node_style = view.read(cx).history_graph_node_style;
+                let history = view.read(cx);
+                let node_style = history.history_graph_node_style;
+                let graph_metrics = crate::view::history_graph_style::history_graph_metrics(
+                    history.history_graph_style,
+                );
                 window.with_content_mask(
                     Some(ContentMask {
                         bounds: graph_bounds,
@@ -556,6 +560,7 @@ pub(super) fn history_commit_row_canvas(
                                 connect_from_top_col,
                                 is_stash_node,
                                 node_style,
+                                graph_metrics,
                                 selected_lane,
                                 row_background,
                                 graph_bounds,

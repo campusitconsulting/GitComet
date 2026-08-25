@@ -32,6 +32,17 @@ pub enum HistoryGraphNodeStyle {
     CompactIcons,
 }
 
+/// Geometry/density preset for the history DAG. Colour remains owned by the
+/// selected application theme and node semantics remain independently
+/// configurable through `HistoryGraphNodeStyle`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryGraphStylePreset {
+    GitComet,
+    #[serde(other)]
+    SourceTree,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct UiSession {
     pub open_repos: Vec<PathBuf>,
@@ -94,6 +105,7 @@ pub struct UiSession {
     /// How strongly unrelated lanes and summaries are muted, from 0 to 100.
     pub history_highlight_strength_percent: Option<u8>,
     pub history_graph_node_style: Option<HistoryGraphNodeStyle>,
+    pub history_graph_style: Option<HistoryGraphStylePreset>,
     pub history_tag_fetch_mode: Option<GitLogTagFetchMode>,
     pub default_history_mode: Option<HistoryMode>,
     pub commit_push_after_enabled: Option<bool>,
@@ -239,6 +251,7 @@ struct UiSessionFile {
     history_highlight_commit_chain: Option<bool>,
     history_highlight_strength_percent: Option<u8>,
     history_graph_node_style: Option<HistoryGraphNodeStyle>,
+    history_graph_style: Option<HistoryGraphStylePreset>,
     history_tag_fetch_mode: Option<GitLogTagFetchMode>,
     default_history_mode: Option<HistoryModeSetting>,
     commit_push_after_enabled: Option<bool>,
@@ -370,6 +383,7 @@ pub fn load_from_path(path: &Path) -> UiSession {
         history_highlight_commit_chain: file.history_highlight_commit_chain,
         history_highlight_strength_percent: file.history_highlight_strength_percent,
         history_graph_node_style: file.history_graph_node_style,
+        history_graph_style: file.history_graph_style,
         history_tag_fetch_mode: file.history_tag_fetch_mode,
         default_history_mode: file.default_history_mode.map(Into::into),
         commit_push_after_enabled: file.commit_push_after_enabled,
@@ -821,6 +835,7 @@ pub struct UiSettings {
     pub history_highlight_commit_chain: Option<bool>,
     pub history_highlight_strength_percent: Option<u8>,
     pub history_graph_node_style: Option<HistoryGraphNodeStyle>,
+    pub history_graph_style: Option<HistoryGraphStylePreset>,
     pub history_tag_fetch_mode: Option<GitLogTagFetchMode>,
     pub default_history_mode: Option<HistoryMode>,
     pub commit_push_after_enabled: Option<bool>,
@@ -989,6 +1004,9 @@ pub fn persist_ui_settings_to_path(settings: UiSettings, path: &Path) -> io::Res
         }
         if let Some(value) = settings.history_graph_node_style {
             file.history_graph_node_style = Some(value);
+        }
+        if let Some(value) = settings.history_graph_style {
+            file.history_graph_style = Some(value);
         }
         if let Some(value) = settings.history_relative_dates {
             file.history_relative_dates = Some(value);
@@ -3066,12 +3084,14 @@ mod tests {
             None
         );
         assert_eq!(load_from_path(&session_file).history_graph_node_style, None);
+        assert_eq!(load_from_path(&session_file).history_graph_style, None);
 
         persist_ui_settings_to_path(
             UiSettings {
                 history_highlight_commit_chain: Some(false),
                 history_highlight_strength_percent: Some(35),
                 history_graph_node_style: Some(HistoryGraphNodeStyle::CompactIcons),
+                history_graph_style: Some(HistoryGraphStylePreset::SourceTree),
                 ..UiSettings::default()
             },
             &session_file,
@@ -3088,6 +3108,10 @@ mod tests {
         assert_eq!(
             load_from_path(&session_file).history_graph_node_style,
             Some(HistoryGraphNodeStyle::CompactIcons)
+        );
+        assert_eq!(
+            load_from_path(&session_file).history_graph_style,
+            Some(HistoryGraphStylePreset::SourceTree)
         );
 
         persist_ui_settings_to_path(

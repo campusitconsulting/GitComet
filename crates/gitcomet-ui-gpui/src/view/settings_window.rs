@@ -208,6 +208,7 @@ enum SettingsSection {
     DiffViewMode,
     GitLogDefaultMode,
     GitLogColumns,
+    GitLogGraphStyle,
     GitLogHighlightStrength,
     GitLogNodeStyle,
     GitLogTagFetch,
@@ -231,6 +232,7 @@ impl SettingsSection {
             Self::DiffContentMode | Self::Diff | Self::DiffViewMode => SettingsCategory::Diff,
             Self::GitLogDefaultMode
             | Self::GitLogColumns
+            | Self::GitLogGraphStyle
             | Self::GitLogHighlightStrength
             | Self::GitLogNodeStyle
             | Self::GitLogTagFetch => SettingsCategory::GitLog,
@@ -459,6 +461,7 @@ pub(crate) struct SettingsWindowView {
     history_highlight_commit_chain: bool,
     history_highlight_strength_percent: u8,
     history_graph_node_style: gitcomet_state::session::HistoryGraphNodeStyle,
+    history_graph_style: gitcomet_state::session::HistoryGraphStylePreset,
     history_show_tags: bool,
     history_tag_fetch_mode: GitLogTagFetchMode,
     default_history_mode: HistoryMode,
@@ -885,6 +888,9 @@ impl SettingsWindowView {
         let history_graph_node_style = ui_session
             .history_graph_node_style
             .unwrap_or(gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons);
+        let history_graph_style = ui_session
+            .history_graph_style
+            .unwrap_or(gitcomet_state::session::HistoryGraphStylePreset::SourceTree);
         let history_show_tags = ui_session.history_show_tags.unwrap_or(true);
         let history_tag_fetch_mode = ui_session.history_tag_fetch_mode.unwrap_or_default();
         let default_history_mode = ui_session.default_history_mode.unwrap_or_default();
@@ -1121,6 +1127,7 @@ impl SettingsWindowView {
             history_highlight_commit_chain,
             history_highlight_strength_percent,
             history_graph_node_style,
+            history_graph_style,
             history_show_tags,
             history_tag_fetch_mode,
             default_history_mode,
@@ -1238,6 +1245,7 @@ impl SettingsWindowView {
             history_highlight_commit_chain: Some(self.history_highlight_commit_chain),
             history_highlight_strength_percent: Some(self.history_highlight_strength_percent),
             history_graph_node_style: Some(self.history_graph_node_style),
+            history_graph_style: Some(self.history_graph_style),
             history_show_tags: Some(self.history_show_tags),
             history_tag_fetch_mode: Some(self.history_tag_fetch_mode),
             default_history_mode: Some(self.default_history_mode),
@@ -2027,6 +2035,22 @@ impl SettingsWindowView {
         self.persist_preferences(cx);
         self.update_main_windows(cx, move |view, _window, cx| {
             view.set_history_graph_node_style(style, cx);
+        });
+        cx.notify();
+    }
+
+    fn set_history_graph_style(
+        &mut self,
+        style: gitcomet_state::session::HistoryGraphStylePreset,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.history_graph_style == style {
+            return;
+        }
+        self.history_graph_style = style;
+        self.persist_preferences(cx);
+        self.update_main_windows(cx, move |view, _window, cx| {
+            view.set_history_graph_style(style, cx);
         });
         cx.notify();
     }
@@ -3844,6 +3868,25 @@ impl Render for SettingsWindowView {
                             this.toggle_section(SettingsSection::GitLogColumns, cx);
                         }));
 
+                    let graph_style_label: SharedString = match self.history_graph_style {
+                        gitcomet_state::session::HistoryGraphStylePreset::SourceTree => {
+                            "SourceTree"
+                        }
+                        gitcomet_state::session::HistoryGraphStylePreset::GitComet => "GitComet",
+                    }
+                    .into();
+                    let graph_style_row = self
+                        .summary_row(
+                            "settings_window_git_log_graph_style",
+                            "Graph geometry",
+                            graph_style_label,
+                            self.expanded_section == Some(SettingsSection::GitLogGraphStyle),
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
+                            this.toggle_section(SettingsSection::GitLogGraphStyle, cx);
+                        }));
+
                     // "Lane", not "chain": what this dims is every lane but the
                     // selected commit's own. A merge's second parent sits on a
                     // lane of its own and washes out with the rest, so the old
@@ -3897,7 +3940,7 @@ impl Render for SettingsWindowView {
                     let node_style_row = self
                         .summary_row(
                             "settings_window_git_log_node_style",
-                            "Special commit nodes",
+                            "Merge/stash node style",
                             node_style_label,
                             self.expanded_section == Some(SettingsSection::GitLogNodeStyle),
                             theme,
@@ -4831,6 +4874,44 @@ impl Render for SettingsWindowView {
                         );
                     }
 
+                    git_log_card = git_log_card.child(graph_style_row);
+                    if self.expanded_section == Some(SettingsSection::GitLogGraphStyle) {
+                        let mut style_container = self.detail_container(
+                            "settings_window_git_log_graph_style_container",
+                            theme,
+                        );
+                        for (id, style, label, description) in [
+                            (
+                                "settings_window_git_log_graph_style_sourcetree",
+                                gitcomet_state::session::HistoryGraphStylePreset::SourceTree,
+                                "SourceTree",
+                                "20pt rows, 11pt lane pitch, 2pt strokes and circular commit dots.",
+                            ),
+                            (
+                                "settings_window_git_log_graph_style_gitcomet",
+                                gitcomet_state::session::HistoryGraphStylePreset::GitComet,
+                                "GitComet",
+                                "28pt rows, 16pt lane pitch and the original lighter graph rhythm.",
+                            ),
+                        ] {
+                            style_container = style_container.child(
+                                self.option_row(
+                                    id,
+                                    label,
+                                    Some(description.into()),
+                                    self.history_graph_style == style,
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _e: &ClickEvent, _window, cx| {
+                                        this.set_history_graph_style(style, cx);
+                                    },
+                                )),
+                            );
+                        }
+                        git_log_card = git_log_card.child(style_container);
+                    }
+
                     git_log_card = git_log_card.child(history_columns_row);
 
                     if self.expanded_section == Some(SettingsSection::GitLogColumns) {
@@ -4994,19 +5075,19 @@ impl Render for SettingsWindowView {
                                 "settings_window_git_log_node_style_dots",
                                 gitcomet_state::session::HistoryGraphNodeStyle::Dots,
                                 "Dots only",
-                                "Use the same compact dot for ordinary, merge and stash commits.",
+                                "Use the same compact dot for ordinary, merge and stash commits; worktree rings remain visible.",
                             ),
                             (
                                 "settings_window_git_log_node_style_compact",
                                 gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons,
                                 "Compact icons",
-                                "Show merge and stash glyphs inside nodes that fit the 11pt lane pitch.",
+                                "Show glyphs only for merge and stash commits, sized to fit the 11pt lane pitch.",
                             ),
                             (
                                 "settings_window_git_log_node_style_detailed",
                                 gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons,
                                 "Detailed icons",
-                                "Use GitComet's original large 16pt semantic nodes.",
+                                "Show GitComet's original large 16pt glyphs for merge and stash commits.",
                             ),
                         ] {
                             node_container = node_container.child(

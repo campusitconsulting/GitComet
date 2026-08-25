@@ -38,8 +38,9 @@ upstream extension point is agreed.
   existing diff while keeping upstream `LegacyAuto` intact.
 - SourceTree Review is the downstream default: History above, Details and Diff
   below. Classic remains available as a safe fallback.
-- The first boundary is static. The next patch adds its drag interaction and
-  persists the already-defined split value.
+- The history/review boundary is a true drag handle. It uses minimum pixel
+  heights rather than a rigid percentage band, persists its last position and
+  restores keyboard focus after the drag.
 - GitComet's per-commit, selected-lane and selected-branch highlighting stays;
   SourceTree is only the reference for stronger stroke/node visual weight.
 - Persisted ratios are defaults, not locks. Dragging uses minimum pixel sizes
@@ -59,6 +60,12 @@ reference screenshot rather than estimated by eye:
 GitComet's semantic colours, selected-lane wash, merge/stash icons, branch
 selection and worktree nodes remain layered on top of this geometry.
 
+The measured geometry is selectable under
+`Settings > Git Log > Graph geometry`. `SourceTree` applies the measurements
+above; `GitComet` restores the roomier original rhythm. The profile only owns
+geometry, so it does not silently replace the user's colour, font or emphasis
+choices.
+
 Graph emphasis is independently configurable under `Settings > Git Log`:
 
 - highlight strength: subtle 20%, balanced 35% (default), strong 55%, or the
@@ -68,10 +75,12 @@ Graph emphasis is independently configurable under `Settings > Git Log`:
   detailed 16pt GitComet icons. Compact icons fit inside the measured 11pt lane
   pitch instead of overlapping adjacent lanes.
 
-The UI family remains selectable under `Settings > General > UI Font`.
-`System Default` resolves to the native macOS UI family used by SourceTree. A
-future graph-profile selector should compose geometry, density and these defaults
-without overriding an explicit font choice made by the user.
+The UI family remains selectable under `Settings > General > UI Font`, and
+overall text/control sizing remains independently selectable under
+`Settings > General > UI scale`. `System Default` resolves to the native macOS
+UI family used by SourceTree. Thus SourceTree graph geometry, font family,
+font/control scale, highlight strength and special-node density can be combined
+without one preset overwriting the others.
 
 Validation:
 
@@ -86,13 +95,24 @@ cargo test -p gitcomet-state
 On macOS the runtime-shaders feature avoids requiring a separately downloaded
 Xcode Metal Toolchain for development and CI checks.
 
+### Reported `8c2c21cc` topology
+
+The commit was located in `/Users/aatamano/Development/ERP`. It is the second
+parent of merge `5cba589c`; its own parent is `d943dd9c`. A regression fixture
+now keeps that lane continuous while the date-ordered commits from an unrelated
+branch pass beside it.
+
+The current production computation already passes this fixture, including with
+the real local and remote branch heads, and the list-to-graph row mapping also
+remains aligned when worktree rows are inserted. Consequently this patch does
+not claim a production fix: reproducing the screenshot discrepancy still needs
+the exact GitComet history scope, ordering/loading state and a screenshot that
+shows the affected SHA.
+
 ## Next patches
 
-1. Horizontal history/review drag handle with semantic focus preservation and
-   no fixed percentage clamp.
-2. Placement-aware file-tree/diff resize and replacement of the graph column's
+1. Placement-aware file-tree/diff resize and replacement of the graph column's
    enlarged safety bound with a maximum derived from the viewport.
-3. Explicit A/B shelf over the existing comparison reducer.
-4. Graph-topology regression fixture for the reported `8c2c21cc` case.
-5. Commit search/reveal and direct commit/range-diff gestures.
-6. Review font size, SourceTree-like theme/density and local comment store.
+2. A/B shelf UI over the comparison reducer, including named reusable pairs.
+3. Commit search/reveal and direct commit/range-diff gestures.
+4. Local review comment store and AI-agent exchange format.
