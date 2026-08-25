@@ -3075,7 +3075,9 @@ impl HistoryView {
     }
 }
 
-const HISTORY_ROW_HEIGHT_PX: f32 = 28.0;
+// Measured from the SourceTree Retina reference: commit centres repeat every
+// 40 physical pixels, i.e. a 20-point row at 2x.
+const HISTORY_ROW_HEIGHT_PX: f32 = 20.0;
 /// Widest a worktree row's badge may grow before its branch label truncates.
 /// Matches the sidebar's branch-row worktree pill.
 const HISTORY_WORKTREE_BADGE_MAX_W_PX: f32 = 200.0;
@@ -3634,7 +3636,7 @@ fn working_tree_summary_history_row(
             );
 
             // Connect the working tree node into the history graph below.
-            let stroke_width = scaled_px(1.6);
+            let stroke_width = scaled_px(HISTORY_GRAPH_STROKE_WIDTH_PX);
             let mut path = PathBuilder::stroke(stroke_width);
             path.move_to(point(center.x, center.y));
             path.line_to(point(center.x, bounds.bottom()));

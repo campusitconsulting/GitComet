@@ -270,7 +270,10 @@ use icons::{svg_icon, svg_spinner};
 
 const HISTORY_COL_BRANCH_PX: f32 = 130.0;
 const HISTORY_COL_GRAPH_PX: f32 = 80.0;
-const HISTORY_COL_GRAPH_MAX_PX: f32 = 240.0;
+// SourceTree allows a busy graph to occupy the space its lanes actually need.
+// Keep a generous safety bound for the resize machinery instead of clipping a
+// normal 25-40 lane repository at the former 240px ceiling.
+const HISTORY_COL_GRAPH_MAX_PX: f32 = 720.0;
 const HISTORY_COL_AUTHOR_PX: f32 = 140.0;
 const HISTORY_COL_DATE_PX: f32 = 160.0;
 const HISTORY_COL_SHA_PX: f32 = 88.0;
@@ -289,13 +292,16 @@ const HISTORY_COL_MESSAGE_MIN_PX: f32 = 220.0;
 const ERROR_BANNER_OVERFLOW_HINT_MIN_LINES: usize = 8;
 const ERROR_BANNER_OVERFLOW_HINT_MIN_CHARS: usize = 240;
 
-const HISTORY_GRAPH_COL_GAP_PX: f32 = 16.0;
-const HISTORY_GRAPH_MARGIN_X_PX: f32 = 10.0;
-/// Corner radius where a graph line turns between columns. Against a 16px column
-/// pitch and a 14px half-row this leaves roughly a 10px straight horizontal run
-/// per column crossed and 8px of straight vertical below the corner, so the turn
-/// reads as a corner rather than as a diagonal.
-const HISTORY_GRAPH_ELBOW_RADIUS_PX: f32 = 6.0;
+// Measured from the 144dpi SourceTree reference screenshot: adjacent lane
+// centres are 22 physical pixels apart, i.e. 11 logical points at 2x Retina.
+const HISTORY_GRAPH_COL_GAP_PX: f32 = 11.0;
+const HISTORY_GRAPH_MARGIN_X_PX: f32 = 11.0;
+// The same reference uses a compact rounded turn, about 5 logical points.
+const HISTORY_GRAPH_ELBOW_RADIUS_PX: f32 = 5.0;
+// Four physical pixels at 2x Retina.
+const HISTORY_GRAPH_STROKE_WIDTH_PX: f32 = 2.0;
+// Ordinary SourceTree commit dots measure 14x14 physical pixels at 2x Retina.
+const HISTORY_GRAPH_NODE_RADIUS_PX: f32 = 3.5;
 
 /// Width of the lane-coloured wash at the right edge of the graph column. It
 /// fades from transparent into the border on the message cell, tying a commit's

@@ -40,6 +40,24 @@ upstream extension point is agreed.
   below. Classic remains available as a safe fallback.
 - The first boundary is static. The next patch adds its drag interaction and
   persists the already-defined split value.
+- GitComet's per-commit, selected-lane and selected-branch highlighting stays;
+  SourceTree is only the reference for stronger stroke/node visual weight.
+- Persisted ratios are defaults, not locks. Dragging uses minimum pixel sizes
+  and collapse instead of a permanent percentage range.
+
+### Measured SourceTree graph geometry
+
+The graph rhythm is taken from the original 144dpi, 2x-Retina SourceTree
+reference screenshot rather than estimated by eye:
+
+- 11pt lane-centre pitch (22 physical pixels);
+- 2pt lane stroke (4 physical pixels);
+- 7pt ordinary commit dot (14 physical pixels);
+- 20pt commit-row pitch (40 physical pixels);
+- 11pt graph inset and approximately 5pt rounded elbows.
+
+GitComet's semantic colours, selected-lane wash, merge/stash icons, branch
+selection and worktree nodes remain layered on top of this geometry.
 
 Validation:
 
@@ -56,8 +74,10 @@ Xcode Metal Toolchain for development and CI checks.
 
 ## Next patches
 
-1. Horizontal history/review drag handle with semantic focus preservation.
-2. Layout selector and details-pane placement-aware resize/collapse.
+1. Horizontal history/review drag handle with semantic focus preservation and
+   no fixed percentage clamp.
+2. Placement-aware file-tree/diff resize and replacement of the graph column's
+   enlarged safety bound with a maximum derived from the viewport.
 3. Explicit A/B shelf over the existing comparison reducer.
 4. Graph-topology regression fixture for the reported `8c2c21cc` case.
 5. Commit search/reveal and direct commit/range-diff gestures.

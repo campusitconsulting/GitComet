@@ -34,11 +34,13 @@ pub(super) fn paint_history_graph(
 
     let design_scale_factor = ui_scale::design_scale_factor_from_window(window);
     let scaled_px = |value| px(value * design_scale_factor);
-    let stroke_width = scaled_px(1.6);
+    let stroke_width = scaled_px(HISTORY_GRAPH_STROKE_WIDTH_PX);
     let col_gap = scaled_px(HISTORY_GRAPH_COL_GAP_PX);
     let margin_x = scaled_px(HISTORY_GRAPH_MARGIN_X_PX);
-    let node_radius = scaled_px(3.4);
-    let node_corner_radius = scaled_px(2.0);
+    let node_radius = scaled_px(HISTORY_GRAPH_NODE_RADIUS_PX);
+    // SourceTree's ordinary commit nodes are circular. Merge, stash and
+    // worktree nodes keep GitComet's richer icon treatment below.
+    let node_corner_radius = node_radius;
 
     let elbow_radius = scaled_px(HISTORY_GRAPH_ELBOW_RADIUS_PX);
 
@@ -569,7 +571,7 @@ pub(super) fn paint_history_graph_band(
 
     let design_scale_factor = ui_scale::design_scale_factor_from_window(window);
     let scaled_px = |value| px(value * design_scale_factor);
-    let stroke_width = scaled_px(1.6);
+    let stroke_width = scaled_px(HISTORY_GRAPH_STROKE_WIDTH_PX);
     let col_gap = scaled_px(HISTORY_GRAPH_COL_GAP_PX);
     let margin_x = scaled_px(HISTORY_GRAPH_MARGIN_X_PX);
     let elbow_radius = scaled_px(HISTORY_GRAPH_ELBOW_RADIUS_PX);
@@ -615,8 +617,8 @@ pub(super) fn paint_history_graph_band(
     }
 
     // A pushed-out node sits one column past the last lane. The auto width budgets
-    // exactly that column's worth of trailing margin, but it is clamped at
-    // `HISTORY_COL_GRAPH_MAX_PX` and the user can drag the column narrower still
+    // exactly that column's worth of trailing margin, but it is bounded by the
+    // graph column's generous safety maximum and the user can drag it narrower
     // (`history_col_graph_auto == false`), and the graph cell is `overflow_hidden`
     // -- past the edge the node and its connector are not clipped so much as
     // deleted, leaving a band of bare lanes with nothing marking the changes.
@@ -1404,10 +1406,10 @@ mod band_tests {
 mod tests {
     use super::*;
 
-    /// Design geometry the radius has to sit inside: 16px column pitch, 14px
-    /// half-row.
+    /// Measured SourceTree design geometry the radius has to sit inside: 11pt
+    /// column pitch and a 10pt half-row.
     const COL_GAP: f32 = HISTORY_GRAPH_COL_GAP_PX;
-    const HALF_ROW: f32 = 14.0;
+    const HALF_ROW: f32 = 10.0;
 
     /// The auto width is `MARGIN_X * 2 + COL_GAP * max_lanes`, and a pushed-out
     /// node sits on column `max_lanes` -- exactly on the trailing margin. This
@@ -1436,8 +1438,9 @@ mod tests {
         let gap = px(HISTORY_GRAPH_COL_GAP_PX);
         let clamped_width = px(crate::view::HISTORY_COL_GRAPH_MAX_PX);
 
-        // 20 lanes wants x = 330 in a column the clamp holds at 240.
-        let offset = band_node_x_offset(20, margin, gap, clamped_width);
+        // More lanes than the safety maximum can hold still produce a visible
+        // node rather than losing it beyond the clipped cell.
+        let offset = band_node_x_offset(80, margin, gap, clamped_width);
         assert!(
             offset < clamped_width,
             "the node must stay inside the clipped cell, got {offset:?}"
