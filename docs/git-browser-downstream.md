@@ -60,20 +60,24 @@ reference screenshot rather than estimated by eye:
 GitComet's semantic colours, selected-lane wash, merge/stash icons, branch
 selection and worktree nodes remain layered on top of this geometry.
 
-The measured geometry is selectable under
-`Settings > Git Log > Graph geometry`. `SourceTree` applies the measurements
-above; `GitComet` restores the roomier original rhythm. The profile only owns
-geometry, so it does not silently replace the user's colour, font or emphasis
-choices.
+The base history profile is selectable under
+`Settings > Git Log > History appearance profile`. `SourceTree` applies the
+compact measurements above; `GitComet` restores the roomier original rhythm.
+The profile owns spacing and graph geometry only. Theme colours, fonts,
+highlight strength and special commit symbols remain independent settings.
 
 Graph emphasis is independently configurable under `Settings > Git Log`:
 
-- highlight strength: subtle 20%, balanced 35% (default), strong 55%, or the
-  former GitComet maximum 75%; the same value controls lane, node, message-border
-  and summary-text wash so a row never renders at contradictory strengths;
-- special commit nodes: dots only, compact 9pt icons (default), or the original
-  detailed 16pt GitComet icons. Compact icons fit inside the measured 11pt lane
-  pitch instead of overlapping adjacent lanes.
+- highlight strength: selected only 0% (no dimming or greying of other lanes),
+  minimal 10%, subtle 20%, balanced 35% (default), or strong 55%; the same value
+  controls lane, node, message-border and summary-text wash so a row never
+  renders at contradictory strengths. Previously saved custom values remain
+  valid but are not promoted as presets. Turning lane highlighting off remains
+  a separate option;
+- special commit nodes: plain dots, small 7pt discs with 4.5pt glyphs (default),
+  or the original detailed 16pt GitComet symbols. Pictograms appear only on
+  merge and stash commits; ordinary commits remain dots. The small symbols leave
+  clear space inside the measured 11pt lane pitch.
 
 The UI family remains selectable under `Settings > General > UI Font`, and
 overall text/control sizing remains independently selectable under

@@ -827,10 +827,17 @@ fn paint_commit_node(
     );
 }
 
+fn icon_node_dimensions(style: gitcomet_state::session::HistoryGraphNodeStyle) -> (f32, f32) {
+    match style {
+        gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons => (16.0, 10.5),
+        gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons
+        | gitcomet_state::session::HistoryGraphNodeStyle::Dots => (7.0, 4.5),
+    }
+}
+
 /// Nodes that carry a glyph — merges and stashes — read as a solid disc in the
-/// lane colour with the icon knocked out of it in the background colour. Sized
-/// to the full lane pitch, so in dense multi-lane regions the disc touches its
-/// neighbours.
+/// lane colour with the icon knocked out of it in the background colour. The
+/// compact variant leaves breathing room inside SourceTree's 11pt lane pitch.
 pub(super) fn paint_icon_node(
     x_center: Pixels,
     y_center: Pixels,
@@ -843,11 +850,7 @@ pub(super) fn paint_icon_node(
 ) {
     let design_scale_factor = ui_scale::design_scale_factor_from_window(window);
     let scaled_px = |value| px(value * design_scale_factor);
-    let (diameter, glyph) = match style {
-        gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons => (16.0, 10.5),
-        gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons
-        | gitcomet_state::session::HistoryGraphNodeStyle::Dots => (9.0, 6.0),
-    };
+    let (diameter, glyph) = icon_node_dimensions(style);
     let diameter = scaled_px(diameter);
     let glyph = scaled_px(glyph);
 
@@ -1450,6 +1453,22 @@ mod tests {
         crate::view::history_graph_style::SOURCETREE_GRAPH_METRICS;
     const COL_GAP: f32 = SOURCE.lane_pitch;
     const HALF_ROW: f32 = SOURCE.row_height * 0.5;
+
+    #[test]
+    fn compact_merge_and_stash_symbols_leave_room_inside_sourcetree_lanes() {
+        let (diameter, glyph) =
+            icon_node_dimensions(gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons);
+        assert_eq!((diameter, glyph), (7.0, 4.5));
+        assert!(diameter < SOURCE.lane_pitch);
+    }
+
+    #[test]
+    fn detailed_merge_and_stash_symbols_keep_the_original_size() {
+        assert_eq!(
+            icon_node_dimensions(gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons,),
+            (16.0, 10.5)
+        );
+    }
 
     /// The auto width is `MARGIN_X * 2 + COL_GAP * max_lanes`, and a pushed-out
     /// node sits on column `max_lanes` -- exactly on the trailing margin. This

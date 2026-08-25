@@ -170,6 +170,16 @@ const DIFF_VIEW_MODE_OPTIONS: &[(&str, DiffViewMode, &str)] = &[
 
 const HISTORY_HIGHLIGHT_STRENGTH_OPTIONS: &[(&str, u8, &str)] = &[
     (
+        "settings_window_git_log_highlight_strength_selected_only",
+        0,
+        "Emphasize the selected lane without dimming or greying other lanes.",
+    ),
+    (
+        "settings_window_git_log_highlight_strength_minimal",
+        10,
+        "Keep the graph almost unchanged while lightly marking the selected lane.",
+    ),
+    (
         "settings_window_git_log_highlight_strength_subtle",
         20,
         "Keep other lanes clearly coloured.",
@@ -184,12 +194,32 @@ const HISTORY_HIGHLIGHT_STRENGTH_OPTIONS: &[(&str, u8, &str)] = &[
         55,
         "Make unrelated lanes noticeably quieter.",
     ),
-    (
-        "settings_window_git_log_highlight_strength_maximum",
-        75,
-        "Match GitComet's former high-contrast highlight.",
-    ),
 ];
+
+fn history_highlight_strength_label(percent: u8) -> String {
+    match percent {
+        0 => "Selected only (0%)".to_string(),
+        10 => "Minimal (10%)".to_string(),
+        20 => "Subtle (20%)".to_string(),
+        35 => "Balanced (35%)".to_string(),
+        55 => "Strong (55%)".to_string(),
+        saved => format!("Custom ({saved}%)"),
+    }
+}
+
+fn history_graph_node_style_label(
+    style: gitcomet_state::session::HistoryGraphNodeStyle,
+) -> &'static str {
+    match style {
+        gitcomet_state::session::HistoryGraphNodeStyle::Dots => "Plain dots",
+        gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons => {
+            "Small merge & stash symbols"
+        }
+        gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons => {
+            "Large merge & stash symbols"
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SettingsSection {
@@ -3878,7 +3908,7 @@ impl Render for SettingsWindowView {
                     let graph_style_row = self
                         .summary_row(
                             "settings_window_git_log_graph_style",
-                            "Graph geometry",
+                            "History appearance profile",
                             graph_style_label,
                             self.expanded_section == Some(SettingsSection::GitLogGraphStyle),
                             theme,
@@ -3905,14 +3935,9 @@ impl Render for SettingsWindowView {
                             );
                         }));
 
-                    let highlight_strength_label: SharedString = match self
-                        .history_highlight_strength_percent
-                    {
-                        0..=27 => "Subtle (20%)",
-                        28..=44 => "Balanced (35%)",
-                        45..=64 => "Strong (55%)",
-                        _ => "Maximum (75%)",
-                    }
+                    let highlight_strength_label: SharedString = history_highlight_strength_label(
+                        self.history_highlight_strength_percent,
+                    )
                     .into();
                     let highlight_strength_row = self
                         .summary_row(
@@ -3927,20 +3952,12 @@ impl Render for SettingsWindowView {
                             this.toggle_section(SettingsSection::GitLogHighlightStrength, cx);
                         }));
 
-                    let node_style_label: SharedString = match self.history_graph_node_style {
-                        gitcomet_state::session::HistoryGraphNodeStyle::Dots => "Dots only",
-                        gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons => {
-                            "Compact icons"
-                        }
-                        gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons => {
-                            "Detailed icons"
-                        }
-                    }
-                    .into();
+                    let node_style_label: SharedString =
+                        history_graph_node_style_label(self.history_graph_node_style).into();
                     let node_style_row = self
                         .summary_row(
                             "settings_window_git_log_node_style",
-                            "Merge/stash node style",
+                            "Special commit symbols",
                             node_style_label,
                             self.expanded_section == Some(SettingsSection::GitLogNodeStyle),
                             theme,
@@ -4885,13 +4902,13 @@ impl Render for SettingsWindowView {
                                 "settings_window_git_log_graph_style_sourcetree",
                                 gitcomet_state::session::HistoryGraphStylePreset::SourceTree,
                                 "SourceTree",
-                                "20pt rows, 11pt lane pitch, 2pt strokes and circular commit dots.",
+                                "Compact base profile: 20pt rows, 11pt lane pitch and 2pt strokes.",
                             ),
                             (
                                 "settings_window_git_log_graph_style_gitcomet",
                                 gitcomet_state::session::HistoryGraphStylePreset::GitComet,
                                 "GitComet",
-                                "28pt rows, 16pt lane pitch and the original lighter graph rhythm.",
+                                "Spacious base profile: 28pt rows, 16pt lane pitch and the original graph rhythm.",
                             ),
                         ] {
                             style_container = style_container.child(
@@ -4909,7 +4926,16 @@ impl Render for SettingsWindowView {
                                 )),
                             );
                         }
-                        git_log_card = git_log_card.child(style_container);
+                        git_log_card = git_log_card.child(style_container.child(
+                            div()
+                                .px_2()
+                                .pb_1()
+                                .text_xs()
+                                .text_color(theme.colors.foreground.secondary)
+                                .child(
+                                    "This base profile controls history spacing and graph geometry only. Theme colours, fonts, highlight strength and commit symbols stay independent.",
+                                ),
+                        ));
                     }
 
                     git_log_card = git_log_card.child(history_columns_row);
@@ -5037,13 +5063,8 @@ impl Render for SettingsWindowView {
                             for (id, percent, description) in
                                 HISTORY_HIGHLIGHT_STRENGTH_OPTIONS.iter().copied()
                             {
-                                let label: SharedString = match percent {
-                                    20 => "Subtle (20%)",
-                                    35 => "Balanced (35%)",
-                                    55 => "Strong (55%)",
-                                    _ => "Maximum (75%)",
-                                }
-                                .into();
+                                let label: SharedString =
+                                    history_highlight_strength_label(percent).into();
                                 strength_container = strength_container.child(
                                     self.option_row(
                                         id,
@@ -5074,20 +5095,20 @@ impl Render for SettingsWindowView {
                             (
                                 "settings_window_git_log_node_style_dots",
                                 gitcomet_state::session::HistoryGraphNodeStyle::Dots,
-                                "Dots only",
-                                "Use the same compact dot for ordinary, merge and stash commits; worktree rings remain visible.",
+                                "Plain dots",
+                                "Use plain dots for ordinary, merge and stash commits. No merge or stash pictograms are drawn; worktree rings remain visible.",
                             ),
                             (
                                 "settings_window_git_log_node_style_compact",
                                 gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons,
-                                "Compact icons",
-                                "Show glyphs only for merge and stash commits, sized to fit the 11pt lane pitch.",
+                                "Small merge & stash symbols",
+                                "Ordinary commits remain dots. Small pictograms appear only on merge and stash commits.",
                             ),
                             (
                                 "settings_window_git_log_node_style_detailed",
                                 gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons,
-                                "Detailed icons",
-                                "Show GitComet's original large 16pt glyphs for merge and stash commits.",
+                                "Large merge & stash symbols",
+                                "Ordinary commits remain dots. Large pictograms appear only on merge and stash commits.",
                             ),
                         ] {
                             node_container = node_container.child(
@@ -5865,6 +5886,37 @@ mod tests {
 
     const SESSION_FILE_ENV: &str = "GITCOMET_SESSION_FILE";
     const DIFF_DEFAULTS_SESSION_SUBTEST_ENV: &str = "GITCOMET_DIFF_DEFAULTS_SESSION_SUBTEST";
+
+    #[test]
+    fn history_highlight_presets_are_the_less_aggressive_set() {
+        let percents = HISTORY_HIGHLIGHT_STRENGTH_OPTIONS
+            .iter()
+            .map(|(_, percent, _)| *percent)
+            .collect::<Vec<_>>();
+        assert_eq!(percents, vec![0, 10, 20, 35, 55]);
+        assert_eq!(history_highlight_strength_label(0), "Selected only (0%)");
+        assert_eq!(history_highlight_strength_label(10), "Minimal (10%)");
+        assert_eq!(history_highlight_strength_label(55), "Strong (55%)");
+        assert_eq!(history_highlight_strength_label(75), "Custom (75%)");
+    }
+
+    #[test]
+    fn history_node_style_labels_explain_symbol_scale_and_scope() {
+        use gitcomet_state::session::HistoryGraphNodeStyle;
+
+        assert_eq!(
+            history_graph_node_style_label(HistoryGraphNodeStyle::Dots),
+            "Plain dots"
+        );
+        assert_eq!(
+            history_graph_node_style_label(HistoryGraphNodeStyle::CompactIcons),
+            "Small merge & stash symbols"
+        );
+        assert_eq!(
+            history_graph_node_style_label(HistoryGraphNodeStyle::DetailedIcons),
+            "Large merge & stash symbols"
+        );
+    }
 
     struct TestBackend;
 
