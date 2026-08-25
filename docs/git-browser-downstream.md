@@ -171,35 +171,42 @@ state of two different worktrees at once. A commit-to-live-worktree comparison
 continues to use the existing dedicated path, whose live side is the active
 repository workdir.
 
-The remaining interaction and persistence gaps are explicit:
+Both A/B chips are direct, searchable endpoint pickers. They combine loaded
+local and remote branches, local and remote tags, worktree HEADs and history
+commits in one sectioned list; full OIDs and commit summaries are searchable.
+Context-menu actions remain as a faster route when the desired object is
+already under the pointer.
 
-- the A and B chips show the current endpoints but are not yet clickable
-  endpoint pickers; commit/ref/worktree context menus are the only no-modifier
-  input route;
-- named pairs exist only in `RepoState`, so closing/reopening a repository loses
-  them. They need a path-keyed session representation and restore/persist wiring;
+The remaining endpoint-model gap is explicit:
+
 - endpoints are resolved immutable commit IDs. Tracking a moving branch/ref or
   either dirty worktree requires a richer endpoint enum and refresh-time
   resolution, rather than overloading `ComparisonMark`.
 
-Submodule compatibility is partial but safe. A changed gitlink in an arbitrary
+Named pairs are persisted per repository path in `session.json`. Selecting a
+saved pair restores A, B and the active comparison after restart while an
+unsaved draft A/B remains intentionally temporary. Session writes merge open
+repository shelves with stored closed-repository shelves instead of replacing
+the whole map.
+
+Submodule compatibility covers the full immutable A/B range. A changed gitlink in an arbitrary
 commit range is flagged in `diff_range_files` and its selected range patch shows
-the pointer change (`Subproject commit ...`). The richer inline submodule
-summary and inner-commit navigation currently accept a working-tree target or a
-single commit relative to its parent; the backend rejects `CommitRange` summary
-targets. Supporting inner history for arbitrary A/B ranges therefore requires a
-new range-aware submodule-summary operation. It must not route a range target to
-the existing single-commit API.
+the pointer change (`Subproject commit ...`). Selecting that gitlink now loads a
+range-aware submodule summary: the selected parent commits are resolved to their
+two recorded submodule OIDs and inner file changes/navigation are available when
+both nested commits exist locally. Missing objects remain an explicit
+`Submodule history is not available locally` state rather than a misleading
+empty range.
 
 ## Next patches
 
-1. Placement-aware file-tree/diff resize and replacement of the graph column's
+1. Inline local-review markers, thread list, resolve UI and external sidecar
+   reload.
+2. Dirty-worktree endpoints for two different linked worktrees.
+3. Placement-aware file-tree/diff resize and replacement of the graph column's
    enlarged safety bound with a maximum derived from the viewport.
-2. A/B shelf UI over the comparison reducer, including named reusable pairs.
-3. Commit search/reveal and direct commit/range-diff gestures.
-4. Local review comment store and AI-agent exchange format.
 
 The v1 local JSON model and atomic storage contract are documented in
-[`local-review-protocol.md`](local-review-protocol.md). The remaining work is UI,
-reducer/effect wiring and a small CLI facade; the schema is already independent
-of any hosting provider.
+[`local-review-protocol.md`](local-review-protocol.md). The CLI facade and first
+diff-line comment prompt are implemented; the schema remains independent of any
+hosting provider.
