@@ -13,9 +13,9 @@ use gitcomet_core::conflict_session::{
     ConflictResolverStrategy, ConflictSession, reconstruct_conflict_marker_sides,
 };
 use gitcomet_core::domain::{
-    Branch, CommitDetails, CommitFileChange, CommitId, EMPTY_TREE_ID, FileEntry, FileSource,
-    FileStatusKind, LogPage, RecentCommitMessage, RefMetadata, ReflogEntry, Remote, RemoteBranch,
-    RemoteTag, RepoStatus, StashEntry, Submodule, Tag, UpstreamDivergence, Worktree,
+    Branch, CommitDetails, CommitFileChange, CommitId, DiffTarget, EMPTY_TREE_ID, FileEntry,
+    FileSource, FileStatusKind, LogPage, RecentCommitMessage, RefMetadata, ReflogEntry, Remote,
+    RemoteBranch, RemoteTag, RepoStatus, StashEntry, Submodule, Tag, UpstreamDivergence, Worktree,
     WorktreeDirtySummary,
 };
 use gitcomet_core::error::Error;
@@ -998,13 +998,13 @@ pub(super) enum ComparisonSource {
     Explicit,
 }
 
-/// Enter "compare two points" mode: record the ordered `from`/`to` pair and load
-/// the changed-file list. A `to` of `None` compares `from` against the live
-/// working tree. The diff pane is left empty (any prior selection is cleared) so
-/// the comparison presents the file side-selection first — the user opens an
-/// individual file's range diff by clicking it, rather than the whole range
-/// patch opening automatically. Reused by multi-commit selection, the
-/// mark/compare context-menu flow, and the compare-with-working-tree action.
+/// Enter "compare two points" mode: record the ordered `from`/`to` pair, load
+/// the changed-file list, and immediately open the whole-range patch. A `to` of
+/// `None` compares `from` against the live working tree. File rows remain
+/// available to narrow the already-visible patch to one path, but opening a
+/// comparison never leaves the review pane blank waiting for another click.
+/// Reused by multi-commit selection, the mark/compare context-menu flow, and
+/// the compare-with-working-tree action.
 pub(super) fn compare_range(
     state: &mut AppState,
     repo_id: RepoId,
@@ -1031,7 +1031,15 @@ pub(super) fn compare_range(
         repo_state.begin_range_files_load()
     };
 
-    let mut effects = super::diff_selection::clear_diff_selection(state, repo_id);
+    let mut effects = super::diff_selection::select_diff(
+        state,
+        repo_id,
+        DiffTarget::CommitRange {
+            from_commit_id: from.clone(),
+            to_commit_id: to.clone(),
+            path: None,
+        },
+    );
     effects.push(Effect::LoadRangeFiles {
         repo_id,
         from,

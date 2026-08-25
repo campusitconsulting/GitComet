@@ -2909,7 +2909,7 @@ mod comparison_tests {
     use crate::model::{AppState, ComparisonMark, ComparisonSlot, Loadable, RepoState};
     use crate::msg::{CommitSelectMode, Effect};
     use gitcomet_core::domain::{
-        Commit, CommitFileChange, CommitId, FileStatusKind, LogPage, RepoSpec,
+        Commit, CommitFileChange, CommitId, DiffTarget, FileStatusKind, LogPage, RepoSpec,
     };
     use gitcomet_core::process::{
         GitExecutableAvailability, GitExecutablePreference, GitRuntimeState,
@@ -3001,9 +3001,16 @@ mod comparison_tests {
         assert_eq!(range.from, c0);
         assert_eq!(range.to, Some(c3.clone()));
 
-        // The diff pane stays empty: the comparison presents the file
-        // side-selection first, and the user opens a file to view its diff.
-        assert_eq!(repo(&state, repo_id).diff_state.diff_target, None);
+        // The whole range opens immediately; the changed-file list can then
+        // narrow this target to one path without an extra prerequisite click.
+        assert_eq!(
+            repo(&state, repo_id).diff_state.diff_target,
+            Some(DiffTarget::CommitRange {
+                from_commit_id: c0.clone(),
+                to_commit_id: Some(c3.clone()),
+                path: None,
+            })
+        );
         assert!(matches!(
             repo(&state, repo_id).history_state.range_files,
             Loadable::Loading
@@ -3015,6 +3022,13 @@ mod comparison_tests {
             )),
             "a LoadRangeFiles effect for c0->c3 should be issued"
         );
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::LoadSelectedDiff {
+                load_patch_diff: true,
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -3351,12 +3365,19 @@ mod comparison_tests {
         // The tip is the working tree, not a commit.
         assert_eq!(range.to, None);
         assert_eq!(range.to_label, "Working tree");
-        // A worktree-tip file list load is issued, and the diff pane is cleared.
+        // A worktree-tip file list and the whole live comparison load together.
         assert!(effects.iter().any(|e| matches!(
             e,
             Effect::LoadRangeFiles { from: f, to: None, .. } if *f == from
         )));
-        assert_eq!(repo(&state, repo_id).diff_state.diff_target, None);
+        assert_eq!(
+            repo(&state, repo_id).diff_state.diff_target,
+            Some(DiffTarget::CommitRange {
+                from_commit_id: from,
+                to_commit_id: None,
+                path: None,
+            })
+        );
     }
 
     /// A refresh means two full-tree `git diff` calls, so changes arriving while
