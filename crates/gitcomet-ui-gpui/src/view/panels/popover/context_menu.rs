@@ -948,6 +948,17 @@ impl PopoverHost {
             ContextMenuAction::ClearComparisonMark { repo_id } => {
                 self.store.dispatch(Msg::ClearComparisonMark { repo_id });
             }
+            ContextMenuAction::SetComparisonSlot {
+                repo_id,
+                slot,
+                endpoint,
+            } => {
+                self.store.dispatch(Msg::SetComparisonSlot {
+                    repo_id,
+                    slot,
+                    endpoint,
+                });
+            }
             ContextMenuAction::CherryPickCommit { repo_id, commit_id } => {
                 let anchor = self.popover_anchor_point();
                 self.open_popover_at(

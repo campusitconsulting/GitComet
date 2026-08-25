@@ -199,6 +199,11 @@ pub(in crate::view) enum ContextMenuAction {
     ClearComparisonMark {
         repo_id: RepoId,
     },
+    SetComparisonSlot {
+        repo_id: RepoId,
+        slot: gitcomet_state::model::ComparisonSlot,
+        endpoint: gitcomet_state::model::ComparisonMark,
+    },
     CheckoutCommit {
         repo_id: RepoId,
         commit_id: CommitId,

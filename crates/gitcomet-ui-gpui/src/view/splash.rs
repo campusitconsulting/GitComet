@@ -1374,15 +1374,23 @@ impl GitCometView {
                     .flex_1()
                     .min_h(px(0.0))
                     .flex()
-                    .flex_row()
+                    .flex_col()
+                    .child(self.comparison_shelf_bar(theme, cx))
                     .child(
                         div()
-                            .h_full()
-                            .border_r_1()
-                            .border_color(theme.colors.stroke.subtle)
-                            .child(details_surface),
-                    )
-                    .child(main_surface),
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .flex()
+                            .flex_row()
+                            .child(
+                                div()
+                                    .h_full()
+                                    .border_r_1()
+                                    .border_color(theme.colors.stroke.subtle)
+                                    .child(details_surface),
+                            )
+                            .child(main_surface),
+                    ),
             )
             .into_any_element()
     }

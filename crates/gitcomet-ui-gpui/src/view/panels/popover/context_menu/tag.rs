@@ -130,6 +130,26 @@ fn tag_names_model(
 
     items.push(ContextMenuItem::Separator);
     // Comparison: mark this tag's commit, or compare it against a mark.
+    let endpoint = gitcomet_state::model::ComparisonMark {
+        commit_id: commit_id.clone(),
+        label: compare_label.clone(),
+    };
+    for (slot, slot_label) in [
+        (gitcomet_state::model::ComparisonSlot::A, "A"),
+        (gitcomet_state::model::ComparisonSlot::B, "B"),
+    ] {
+        items.push(ContextMenuItem::Entry {
+            label: format!("Set {compare_label} as comparison {slot_label}").into(),
+            icon: Some("icons/tag.svg".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::SetComparisonSlot {
+                repo_id,
+                slot,
+                endpoint: endpoint.clone(),
+            }),
+        });
+    }
     items.push(ContextMenuItem::Entry {
         label: format!("Mark {compare_label} for comparison").into(),
         icon: Some("icons/tag.svg".into()),
