@@ -65,7 +65,7 @@ impl GitCometView {
         let full_caption = endpoint
             .as_ref()
             .map(|endpoint| format!("{} ({})", endpoint.label, endpoint.commit_id.as_ref()))
-            .unwrap_or_else(|| "Right-click a commit and choose Set as comparison".to_string());
+            .unwrap_or_else(|| "Click to choose a branch, tag, worktree, or commit".to_string());
         let has_endpoint = endpoint.is_some();
         let label = div()
             .id(format!("comparison_endpoint_{slot_key}"))
@@ -92,6 +92,15 @@ impl GitCometView {
                 theme.colors.foreground.secondary
             })
             .child(caption)
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                this.open_popover_at(
+                    PopoverKind::ComparisonEndpointPicker { repo_id, slot },
+                    event.position(),
+                    window,
+                    cx,
+                );
+            }))
             .gitcomet_tooltip(theme, full_caption.into());
 
         div()

@@ -4433,6 +4433,10 @@ impl AutosquashMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum PopoverKind {
     RepoPicker,
+    ComparisonEndpointPicker {
+        repo_id: RepoId,
+        slot: gitcomet_state::model::ComparisonSlot,
+    },
     BranchPicker {
         purpose: BranchPickerPurpose,
     },

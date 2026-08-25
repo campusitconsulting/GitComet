@@ -9,6 +9,7 @@ mod branch_picker;
 mod checkout_remote_branch_prompt;
 mod cherry_pick_commit_confirm;
 mod clone_repo;
+mod comparison_endpoint_picker;
 mod commit_prompt;
 pub(in super::super) mod context_menu;
 mod create_branch_from_ref_prompt;
@@ -164,6 +165,7 @@ pub(in super::super) struct PopoverHost {
     _ui_model_subscription: gpui::Subscription,
     _repo_picker_search_input_subscription: Option<gpui::Subscription>,
     _branch_picker_search_input_subscription: Option<gpui::Subscription>,
+    _comparison_endpoint_search_input_subscription: Option<gpui::Subscription>,
     _worktree_picker_search_input_subscription: Option<gpui::Subscription>,
     _workspace_picker_search_input_subscription: Option<gpui::Subscription>,
     _submodule_picker_search_input_subscription: Option<gpui::Subscription>,
@@ -231,6 +233,7 @@ pub(in super::super) struct PopoverHost {
     /// position it was invoked at. The picker stays open underneath it.
     picker_row_menu: Option<picker_row_menu::PickerRowMenu>,
     branch_picker_selected_index: Option<usize>,
+    comparison_endpoint_selected_index: Option<usize>,
     worktree_picker_selected_index: Option<usize>,
     workspace_picker_selected_index: Option<usize>,
     /// Path/reference the workspace badge's create row hands to the Add-worktree
@@ -251,6 +254,8 @@ pub(in super::super) struct PopoverHost {
     /// every frame. See [`rows_cache`] — a hover moving between rows re-renders
     /// this whole view.
     branch_picker_rows_cache: rows_cache::RowsCache<branch_picker::BranchPickerNavTarget>,
+    comparison_endpoint_rows_cache:
+        rows_cache::RowsCache<comparison_endpoint_picker::ComparisonEndpoint>,
     workspace_picker_rows_cache: rows_cache::RowsCache<workspace_picker::WorkspaceRow>,
     repo_picker_rows_cache: rows_cache::RowsCache<repo_picker::RepoPickerEntry>,
     stash_picker_rows_cache: rows_cache::RowsCache<stash_picker_prompt::StashRow>,
@@ -261,6 +266,7 @@ pub(in super::super) struct PopoverHost {
 
     repo_picker_search_input: Option<Entity<components::TextInput>>,
     branch_picker_search_input: Option<Entity<components::TextInput>>,
+    comparison_endpoint_search_input: Option<Entity<components::TextInput>>,
     remote_picker_search_input: Option<Entity<components::TextInput>>,
     file_history_search_input: Option<Entity<components::TextInput>>,
     history_author_filter_search_input: Option<Entity<components::TextInput>>,
@@ -825,6 +831,7 @@ fn popover_anchor_corner(kind: &PopoverKind) -> Anchor {
 pub(in super::super) fn popover_width_spec(kind: &PopoverKind) -> Option<PopoverWidthSpec> {
     match kind {
         PopoverKind::RepoPicker
+        | PopoverKind::ComparisonEndpointPicker { .. }
         | PopoverKind::BranchPicker {
             purpose: BranchPickerPurpose::Delete | BranchPickerPurpose::RebaseOnto,
         } => Some(PICKER_WIDTH),
@@ -1712,6 +1719,7 @@ impl PopoverHost {
             _ui_model_subscription: subscription,
             _repo_picker_search_input_subscription: None,
             _branch_picker_search_input_subscription: None,
+            _comparison_endpoint_search_input_subscription: None,
             _worktree_picker_search_input_subscription: None,
             _workspace_picker_search_input_subscription: None,
             _submodule_picker_search_input_subscription: None,
@@ -1749,6 +1757,7 @@ impl PopoverHost {
             repo_picker_sort_menu_open: false,
             picker_row_menu: None,
             branch_picker_selected_index: None,
+            comparison_endpoint_selected_index: None,
             worktree_picker_selected_index: None,
             workspace_picker_selected_index: None,
             pending_worktree_add_prefill: None,
@@ -1757,6 +1766,7 @@ impl PopoverHost {
             history_author_filter_selected_index: None,
             history_author_suggestions: None,
             branch_picker_rows_cache: rows_cache::RowsCache::default(),
+            comparison_endpoint_rows_cache: rows_cache::RowsCache::default(),
             workspace_picker_rows_cache: rows_cache::RowsCache::default(),
             repo_picker_rows_cache: rows_cache::RowsCache::default(),
             stash_picker_rows_cache: rows_cache::RowsCache::default(),
@@ -1766,6 +1776,7 @@ impl PopoverHost {
             branch_ref_rows_cache: rows_cache::RowsCache::default(),
             repo_picker_search_input: None,
             branch_picker_search_input: None,
+            comparison_endpoint_search_input: None,
             remote_picker_search_input: None,
             file_history_search_input: None,
             history_author_filter_search_input: None,
@@ -3013,6 +3024,7 @@ impl PopoverHost {
             PopoverKind::PreviousCommitMessagesMenu { repo_id } => Some(*repo_id),
             PopoverKind::CommitOptionsMenu { repo_id } => Some(*repo_id),
             PopoverKind::BranchPicker { .. } => self.state.active_repo,
+            PopoverKind::ComparisonEndpointPicker { repo_id, .. } => Some(*repo_id),
             _ => None,
         };
         let Some(repo_id) = repo_id else {
@@ -3021,6 +3033,19 @@ impl PopoverHost {
         let Some(repo) = self.state.repos.iter().find(|repo| repo.id == repo_id) else {
             return;
         };
+
+        if matches!(kind, PopoverKind::ComparisonEndpointPicker { .. }) {
+            if matches!(repo.tags, Loadable::NotLoaded | Loadable::Error(_)) {
+                self.store.dispatch(Msg::LoadTags { repo_id });
+            }
+            if matches!(repo.remote_tags, Loadable::NotLoaded | Loadable::Error(_)) {
+                self.store.dispatch(Msg::LoadRemoteTags { repo_id });
+            }
+            if matches!(repo.worktrees, Loadable::NotLoaded | Loadable::Error(_)) {
+                self.store.dispatch(Msg::LoadWorktrees { repo_id });
+            }
+            return;
+        }
 
         if matches!(kind, PopoverKind::BranchPicker { .. }) {
             // Decorates the checkout picker's rows; load once, retry on error.
@@ -3118,6 +3143,7 @@ impl PopoverHost {
         // picker would spread its occluding scrim over an unrelated popover.
         self.picker_row_menu = None;
         self.branch_picker_selected_index = None;
+        self.comparison_endpoint_selected_index = None;
         self.worktree_picker_selected_index = None;
         self.workspace_picker_selected_index = None;
         self.submodule_picker_selected_index = None;
@@ -3127,6 +3153,7 @@ impl PopoverHost {
         // only be reused when that data is unchanged. Dropping them on open still
         // keeps the memory from outliving the picker that needed it.
         self.branch_picker_rows_cache.clear();
+        self.comparison_endpoint_rows_cache.clear();
         self.workspace_picker_rows_cache.clear();
         self.repo_picker_rows_cache.clear();
         self.stash_picker_rows_cache.clear();
@@ -3156,6 +3183,9 @@ impl PopoverHost {
                 }
                 PopoverKind::BranchPicker { .. } => {
                     let _ = self.ensure_branch_picker_search_input(window, cx);
+                }
+                PopoverKind::ComparisonEndpointPicker { .. } => {
+                    let _ = self.ensure_comparison_endpoint_search_input(window, cx);
                 }
                 PopoverKind::CreateBranchFromRefPrompt {
                     source_selectable,
@@ -4074,6 +4104,9 @@ impl PopoverHost {
 
         let panel = match kind {
             PopoverKind::RepoPicker => repo_picker::panel(self, cx),
+            PopoverKind::ComparisonEndpointPicker { repo_id, slot } => {
+                comparison_endpoint_picker::panel(self, repo_id, slot, cx)
+            }
             PopoverKind::BranchPicker { .. } => branch_picker::panel(self, cx),
             PopoverKind::CreateBranchFromRefPrompt {
                 repo_id,

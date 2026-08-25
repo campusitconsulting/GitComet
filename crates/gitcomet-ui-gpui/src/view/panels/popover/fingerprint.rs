@@ -153,7 +153,8 @@ fn repo_for_popover<'a>(state: &'a AppState, popover: &PopoverKind) -> Option<&'
         | PopoverKind::ConflictResolverOutputMenu { .. } => state.active_repo,
 
         // Popovers that carry an explicit repo id.
-        PopoverKind::CommitPrompt { repo_id }
+        PopoverKind::ComparisonEndpointPicker { repo_id, .. }
+        | PopoverKind::CommitPrompt { repo_id }
         | PopoverKind::StashPickerPrompt { repo_id, .. }
         | PopoverKind::CreateBranchFromRefPrompt { repo_id, .. }
         | PopoverKind::RenameBranchPrompt { repo_id, .. }
@@ -211,6 +212,14 @@ fn hash_repo_for_popover<H: Hasher>(repo: &RepoState, popover: &PopoverKind, has
     view_fingerprint::hash_loadable_kind(&repo.open, hasher);
 
     match popover {
+        PopoverKind::ComparisonEndpointPicker { .. } => {
+            repo.branches_rev.hash(hasher);
+            repo.remote_branches_rev.hash(hasher);
+            repo.tags_rev.hash(hasher);
+            repo.remote_tags_rev.hash(hasher);
+            repo.worktrees_rev.hash(hasher);
+            repo.log_rev.hash(hasher);
+        }
         PopoverKind::BranchPicker { .. }
         | PopoverKind::CreateBranchFromRefPrompt { .. }
         | PopoverKind::RenameBranchPrompt { .. }
@@ -426,6 +435,15 @@ fn hash_pending_force_push_lease(repo: &RepoState, hasher: &mut impl Hasher) {
 fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
     match kind {
         PopoverKind::RepoPicker => 0u8.hash(hasher),
+        PopoverKind::ComparisonEndpointPicker { repo_id, slot } => {
+            99u8.hash(hasher);
+            repo_id.hash(hasher);
+            (match slot {
+                gitcomet_state::model::ComparisonSlot::A => 0u8,
+                gitcomet_state::model::ComparisonSlot::B => 1u8,
+            })
+            .hash(hasher);
+        }
         PopoverKind::AddRepoMenu => 66u8.hash(hasher),
         PopoverKind::BranchPicker { purpose } => {
             1u8.hash(hasher);

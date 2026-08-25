@@ -36,6 +36,7 @@ const DATE_BUCKET_SECS: u64 = 60;
 /// guards against a key being compared across pickers if they ever share one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RowsCacheOwner {
+    ComparisonEndpoint,
     BranchCheckout,
     BranchRefs,
     Workspace,
