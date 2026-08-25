@@ -117,8 +117,9 @@ shows the affected SHA.
 
 The fork does not need a second Git model for these objects:
 
-- every local branch that owns a listed worktree already receives an
-  interactive worktree badge in the branch tree;
+- every local branch that owns a listed worktree can show an interactive
+  worktree badge in the branch tree; `Settings > Git log > Show worktrees on
+  branch rows` controls this independently and persists across launches;
 - the separate `Worktrees` section can be expanded for path-oriented browsing
   or collapsed for a branch-oriented combined tree;
 - selecting a worktree reveals its checked-out commit and local-change row in
@@ -127,12 +128,56 @@ The fork does not need a second Git model for these objects:
   revisions and status, and their changed pointer can be reviewed through the
   existing inline submodule diff pipeline.
 
-The missing product controls are therefore small: an explicit switch for
-worktree badges versus the separate list, and honest date metadata. Git does
-not store a canonical branch creation date; the UI must label an earliest
+Together, the independent badge toggle and the existing collapsible Worktrees
+section provide all three presentations without another Git model: badges with
+the section collapsed is the combined view, badges hidden with the section
+expanded is the separate view, and badges shown with the section expanded is
+the both view. Turning badges off never hides or unloads the standalone section.
+
+The remaining product gap here is honest date metadata. Git does not store a
+canonical branch creation date; the UI must label an earliest
 available reflog time as estimated and keep the branch tip-commit date distinct.
 Worktree creation can use filesystem birth time where supported, with a clearly
 labelled fallback rather than presenting an mtime as exact creation time.
+
+### A/B comparison wiring audit (2026-08-25)
+
+The shelf currently reuses the production `CompareCommitRange` reducer and
+`DiffTarget::CommitRange` backend path. Consequently an A/B pair of commits,
+local branch tips, remote branch tips, tags, or the checked-out HEADs of two
+linked worktrees is a real Git range comparison rather than a UI-only bookmark.
+Selecting `Open diff` loads both the changed-file list and the whole-range patch
+through the normal cancellable diff pipeline. Selecting a file then narrows the
+patch to that path.
+
+Worktree row menus now expose `Set worktree HEAD as comparison A/B` directly.
+The saved label contains both the branch and worktree directory name so two
+linked checkouts remain distinguishable. An unborn worktree has no commit
+endpoint and therefore does not offer these actions. This is deliberately a
+HEAD snapshot: the current endpoint model cannot represent the uncommitted
+state of two different worktrees at once. A commit-to-live-worktree comparison
+continues to use the existing dedicated path, whose live side is the active
+repository workdir.
+
+The remaining interaction and persistence gaps are explicit:
+
+- the A and B chips show the current endpoints but are not yet clickable
+  endpoint pickers; commit/ref/worktree context menus are the only no-modifier
+  input route;
+- named pairs exist only in `RepoState`, so closing/reopening a repository loses
+  them. They need a path-keyed session representation and restore/persist wiring;
+- endpoints are resolved immutable commit IDs. Tracking a moving branch/ref or
+  either dirty worktree requires a richer endpoint enum and refresh-time
+  resolution, rather than overloading `ComparisonMark`.
+
+Submodule compatibility is partial but safe. A changed gitlink in an arbitrary
+commit range is flagged in `diff_range_files` and its selected range patch shows
+the pointer change (`Subproject commit ...`). The richer inline submodule
+summary and inner-commit navigation currently accept a working-tree target or a
+single commit relative to its parent; the backend rejects `CommitRange` summary
+targets. Supporting inner history for arbitrary A/B ranges therefore requires a
+new range-aware submodule-summary operation. It must not route a range target to
+the existing single-commit API.
 
 ## Next patches
 
