@@ -34,6 +34,58 @@ fn history_message_min_width(ui_scale_percent: u32) -> Pixels {
     history_scaled_px(HISTORY_COL_MESSAGE_MIN_PX, ui_scale_percent)
 }
 
+/// Commits matching the history find box, ordered the way a user expects:
+/// exact ids first, then abbreviated ids, then visible text. A ticket/build
+/// number is ordinary summary text here, not an issue-tracker lookup. Text
+/// search is deliberately over the loaded page; resolving anything outside it
+/// belongs to Git's object database and is handled by `Msg::RevealCommit`.
+fn history_search_matches(query: &str, commits: &[gitcomet_core::domain::Commit]) -> Vec<CommitId> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let needle = query.to_lowercase();
+    let mut exact = Vec::new();
+    let mut abbreviated = Vec::new();
+    let mut text = Vec::new();
+
+    for commit in commits {
+        let id = commit.id.as_ref();
+        if id.eq_ignore_ascii_case(query) {
+            exact.push(commit.id.clone());
+        } else if id.len() > query.len()
+            && id
+                .get(..query.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(query))
+        {
+            abbreviated.push(commit.id.clone());
+        } else if commit.summary.to_lowercase().contains(&needle)
+            || commit.author.to_lowercase().contains(&needle)
+        {
+            text.push(commit.id.clone());
+        }
+    }
+
+    exact.extend(abbreviated);
+    exact.extend(text);
+    exact
+}
+
+fn next_history_search_match(
+    matches: &[CommitId],
+    selected: Option<&CommitId>,
+) -> Option<CommitId> {
+    let next = selected
+        .and_then(|selected| matches.iter().position(|id| id == selected))
+        .map_or(0, |ix| (ix + 1) % matches.len().max(1));
+    matches.get(next).cloned()
+}
+
+fn resolved_history_reveal_commit(repo: &RepoState) -> Option<CommitId> {
+    let target = repo.history_state.reveal_target.as_ref()?;
+    (repo.history_state.selected_commit.as_ref() == Some(target)).then(|| target.clone())
+}
+
 fn graph_branch_heads<'a>(
     history_scope: LogScope,
     branches: &'a [Branch],
@@ -1056,12 +1108,19 @@ pub(in super::super) struct HistoryView {
     /// Last browse-point commit we scrolled to, so a new one is revealed only when
     /// the historical browse point actually changes.
     last_browse_commit: Option<CommitId>,
+    /// Canonical object id produced by `Msg::RevealCommit`. The reducer first
+    /// stores the raw query, then replaces it with the resolved id while
+    /// selecting that commit; only the latter is safe to feed to a page walk.
+    last_resolved_reveal_commit: Option<CommitId>,
     pub(in super::super) history_worktree_summary_cache: Option<HistoryWorktreeSummaryCache>,
     history_list_plan_cache: Option<HistoryListPlanCache>,
     history_selected_lane_color_cache: Option<HistorySelectedLaneColorCache>,
     pub(in super::super) history_stash_ids_cache: Option<HistoryStashIdsCache>,
     pub(in super::super) history_scroll: UniformListScrollHandle,
     pub(in super::super) history_panel_focus_handle: FocusHandle,
+    history_search_input: Entity<components::TextInput>,
+    history_search_query_cache: String,
+    _history_search_input_subscription: gpui::Subscription,
     /// Minute tick that re-renders the table while the relative date format is
     /// active, so "2 mins ago" labels don't freeze. `None` for absolute formats.
     relative_time_tick: Option<gpui::Task<()>>,
@@ -1125,7 +1184,7 @@ impl HistoryView {
         history_auto_fetch_tags_on_repo_activation: bool,
         root_view: WeakEntity<GitCometView>,
         last_window_size: Size<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
         let state = Arc::clone(&ui_model.read(cx).state);
@@ -1148,6 +1207,17 @@ impl HistoryView {
                 }
             }
 
+            let resolved_reveal_commit =
+                this.active_repo().and_then(resolved_history_reveal_commit);
+            if resolved_reveal_commit != this.last_resolved_reveal_commit {
+                this.last_resolved_reveal_commit = resolved_reveal_commit.clone();
+                if let (Some(repo_id), Some(commit_id)) =
+                    (this.active_repo_id(), resolved_reveal_commit)
+                {
+                    this.request_reveal_commit(repo_id, commit_id, Some(LogScope::AllBranches), cx);
+                }
+            }
+
             if changed {
                 this.notify_fingerprint = next_fingerprint;
                 this.dismiss_history_refs_hover(cx);
@@ -1156,6 +1226,34 @@ impl HistoryView {
         });
 
         let history_panel_focus_handle = cx.focus_handle().tab_index(0).tab_stop(false);
+        let history_search_input = cx.new(|cx| {
+            let mut input = components::TextInput::new(
+                components::TextInputOptions {
+                    placeholder: "Find SHA, branch, number, or commit text".into(),
+                    leading_icon: Some("icons/zoom.svg"),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            input.set_theme(theme, cx);
+            input
+        });
+        let history_search_input_subscription =
+            cx.observe_in(&history_search_input, window, |this, input, window, cx| {
+                let submit = input.update(cx, |input, _| input.take_enter_pressed());
+                if submit {
+                    this.submit_history_search(window, cx);
+                } else {
+                    // TextInput owns its text and survives repository refreshes.
+                    // Notify only for a real edit, never for its caret blink.
+                    let next = input.read(cx).text().to_string();
+                    if this.history_search_query_cache != next {
+                        this.history_search_query_cache = next;
+                        cx.notify();
+                    }
+                }
+            });
         let default_design_widths = default_history_column_design_widths();
         let scale = ui_scale::UiScale::from_percent(ui_scale_percent);
         let default_widths = scaled_history_column_widths(default_design_widths, scale);
@@ -1204,12 +1302,16 @@ impl HistoryView {
             selected_branch: None,
             pending_history_reveal: None,
             last_browse_commit: None,
+            last_resolved_reveal_commit: None,
             history_worktree_summary_cache: None,
             history_list_plan_cache: None,
             history_selected_lane_color_cache: None,
             history_stash_ids_cache: None,
             history_scroll: UniformListScrollHandle::default(),
             history_panel_focus_handle,
+            history_search_input,
+            history_search_query_cache: String::new(),
+            _history_search_input_subscription: history_search_input_subscription,
             relative_time_tick: None,
         }
     }
@@ -1611,6 +1713,53 @@ impl HistoryView {
 
     pub(in super::super) fn set_theme(&mut self, theme: AppTheme, cx: &mut gpui::Context<Self>) {
         self.theme = theme;
+        self.history_search_input
+            .update(cx, |input, cx| input.set_theme(theme, cx));
+        cx.notify();
+    }
+
+    fn history_search_query(&self, cx: &gpui::App) -> String {
+        self.history_search_input.read(cx).text().trim().to_string()
+    }
+
+    fn loaded_history_search_matches(&self, query: &str) -> Vec<CommitId> {
+        self.active_repo()
+            .and_then(Self::display_log_page_for_repo)
+            .map(|page| history_search_matches(query, &page.commits))
+            .unwrap_or_default()
+    }
+
+    /// Reveal the next loaded text/SHA match. When nothing loaded matches, pass
+    /// the query to Git so full/short SHA, branch, tag, and revision expressions
+    /// still work without requiring the relevant history page to be present.
+    fn submit_history_search(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        let query = self.history_search_query(cx);
+        let Some(repo_id) = self.active_repo_id().filter(|_| !query.is_empty()) else {
+            return;
+        };
+        let matches = self.loaded_history_search_matches(&query);
+        let selected = self
+            .active_repo()
+            .and_then(|repo| repo.history_state.selected_commit.as_ref());
+        if let Some(commit_id) = next_history_search_match(&matches, selected) {
+            // Already a full id from the loaded page: skip the redundant
+            // rev-parse/details round trip and reveal its row directly.
+            self.request_reveal_commit(repo_id, commit_id, Some(LogScope::AllBranches), cx);
+        } else {
+            // Do not start a page walk with an unresolved branch/short SHA.
+            // The reducer resolves it first; selection then drives the existing
+            // history observer with the canonical object id.
+            self.store.dispatch(Msg::RevealCommit {
+                repo_id,
+                reference: CommitId(query.into()),
+            });
+        }
+
+        // Store refreshes replace the immutable AppState, never this input
+        // entity. Keeping focus explicit also protects against future reveal UI
+        // changes that might introduce another focusable control.
+        let focus = self.history_search_input.read(cx).focus_handle();
+        window.focus(&focus, cx);
         cx.notify();
     }
 
@@ -3143,6 +3292,70 @@ mod tests {
             author: "a".into(),
             time: SystemTime::UNIX_EPOCH,
         }
+    }
+
+    #[test]
+    fn history_search_prioritizes_sha_then_matches_number_text_and_author() {
+        let mut by_author = commit("eeeeeeee", &[], "housekeeping");
+        by_author.author = "Anne Example".into();
+        let commits = vec![
+            commit("abc12345", &[], "Fix APPS-376 payroll"),
+            commit("37600000", &[], "unrelated"),
+            by_author,
+        ];
+
+        assert_eq!(
+            history_search_matches("376", &commits),
+            vec![CommitId("37600000".into()), CommitId("abc12345".into())],
+            "an abbreviated SHA is more precise than a ticket number in a summary"
+        );
+        assert_eq!(
+            history_search_matches("PAYROLL", &commits),
+            vec![CommitId("abc12345".into())]
+        );
+        assert_eq!(
+            history_search_matches("anne", &commits),
+            vec![CommitId("eeeeeeee".into())]
+        );
+    }
+
+    #[test]
+    fn repeated_history_search_submit_cycles_from_current_selection() {
+        let matches = vec![
+            CommitId("one".into()),
+            CommitId("two".into()),
+            CommitId("three".into()),
+        ];
+        assert_eq!(
+            next_history_search_match(&matches, None),
+            Some(CommitId("one".into()))
+        );
+        assert_eq!(
+            next_history_search_match(&matches, Some(&CommitId("one".into()))),
+            Some(CommitId("two".into()))
+        );
+        assert_eq!(
+            next_history_search_match(&matches, Some(&CommitId("three".into()))),
+            Some(CommitId("one".into()))
+        );
+    }
+
+    #[test]
+    fn history_search_waits_for_git_to_resolve_a_reference_before_page_walk() {
+        let mut repo = RepoState::new_opening(
+            RepoId(9),
+            RepoSpec {
+                workdir: "/tmp/search".into(),
+            },
+        );
+        repo.history_state.reveal_target = Some(CommitId("feature/topic".into()));
+        repo.history_state.selected_commit = None;
+        assert_eq!(resolved_history_reveal_commit(&repo), None);
+
+        let oid = CommitId("abcdef0123456789abcdef0123456789abcdef01".into());
+        repo.history_state.reveal_target = Some(oid.clone());
+        repo.history_state.selected_commit = Some(oid.clone());
+        assert_eq!(resolved_history_reveal_commit(&repo), Some(oid));
     }
 
     /// Anchor placement is the part of the plan that depends on repo data: a

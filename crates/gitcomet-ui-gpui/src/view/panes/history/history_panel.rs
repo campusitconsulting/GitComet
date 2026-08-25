@@ -157,6 +157,7 @@ impl HistoryView {
                     window.refresh();
                 }
             }))
+            .child(self.history_search_bar(cx))
             .child(
                 div()
                     .w_full()
@@ -200,6 +201,55 @@ impl HistoryView {
                     .flex_1()
                     .min_h(px(0.0))
                     .child(div().flex_1().min_h(px(0.0)).child(body)),
+            )
+    }
+
+    fn history_search_bar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
+        let query = self.history_search_query(cx);
+        let match_count = if query.is_empty() {
+            0
+        } else {
+            self.loaded_history_search_matches(&query).len()
+        };
+        let hint = if query.is_empty() {
+            "Enter reveals a commit".to_string()
+        } else if match_count == 1 {
+            "1 loaded match · Enter to reveal".to_string()
+        } else if match_count > 1 {
+            format!("{match_count} loaded matches · Enter moves to next")
+        } else {
+            "No loaded text match · Enter resolves a Git ref".to_string()
+        };
+
+        div()
+            .id("history_commit_search_bar")
+            .flex()
+            .items_center()
+            .gap(ui_scale::design_px_from_percent(8.0, self.ui_scale_percent))
+            .w_full()
+            .px(ui_scale::design_px_from_percent(8.0, self.ui_scale_percent))
+            .py(ui_scale::design_px_from_percent(4.0, self.ui_scale_percent))
+            .bg(theme.colors.surface.canvas)
+            .border_b_1()
+            .border_color(theme.colors.stroke.subtle)
+            .child(
+                div()
+                    .id("history_commit_search_input")
+                    .flex_1()
+                    .min_w(px(120.0))
+                    .max_w(px(520.0))
+                    .child(self.history_search_input.clone()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_xs()
+                    .text_color(theme.colors.foreground.secondary)
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .child(hint),
             )
     }
 
