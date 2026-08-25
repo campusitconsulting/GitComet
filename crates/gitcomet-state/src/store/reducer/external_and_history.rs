@@ -98,6 +98,8 @@ pub(super) fn reload_repo(state: &mut AppState, repo_id: crate::model::RepoId) -
     // active comparison; the mark is the same kind of stale reference, and
     // leaving it would keep offering a "Compare with …" that can only fail.
     repo_state.comparison_mark = None;
+    repo_state.comparison_shelf.a = None;
+    repo_state.comparison_shelf.selected_name = None;
     // A full reload may rewrite history (rebase/amend/branch switch underneath),
     // so back/forward snapshots can reference commits or file revisions that no
     // longer resolve. Start the navigation stacks fresh.

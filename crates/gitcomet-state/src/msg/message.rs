@@ -1,5 +1,8 @@
 use crate::model::GitLogTagFetchMode;
-use crate::model::{ConflictFileLoadMode, DefaultTagType, RepoId, SidebarDataRequest, SidebarMode};
+use crate::model::{
+    ComparisonMark, ComparisonSlot, ConflictFileLoadMode, DefaultTagType, RepoId,
+    SidebarDataRequest, SidebarMode,
+};
 use gitcomet_core::auth::StagedGitAuth;
 use gitcomet_core::conflict_session::ConflictSession;
 use gitcomet_core::domain::*;
@@ -269,6 +272,36 @@ pub enum Msg {
     /// Forget the marked-for-comparison point.
     ClearComparisonMark {
         repo_id: RepoId,
+    },
+    /// Put an already-resolved commit/ref endpoint into shelf slot A or B.
+    SetComparisonSlot {
+        repo_id: RepoId,
+        slot: ComparisonSlot,
+        endpoint: ComparisonMark,
+    },
+    ClearComparisonSlot {
+        repo_id: RepoId,
+        slot: ComparisonSlot,
+    },
+    SwapComparisonSlots {
+        repo_id: RepoId,
+    },
+    /// Add or replace a named pair. Commit-ish resolution happens before this
+    /// message reaches the reducer, just like `CompareCommitRange`.
+    AddNamedComparison {
+        repo_id: RepoId,
+        name: String,
+        a: ComparisonMark,
+        b: ComparisonMark,
+    },
+    /// Select a named pair, copy it into A/B and open its range diff.
+    SelectNamedComparison {
+        repo_id: RepoId,
+        name: String,
+    },
+    RemoveNamedComparison {
+        repo_id: RepoId,
+        name: String,
     },
     SelectDiff {
         repo_id: RepoId,

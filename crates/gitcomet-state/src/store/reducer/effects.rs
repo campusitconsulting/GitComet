@@ -3,9 +3,9 @@ use super::util::{
     push_notification, selected_diff_load_plan,
 };
 use crate::model::{
-    AppNotificationKind, AppState, CommitMultiSelection, ConflictFileLoadMode, DiagnosticKind,
-    ForeignDiffOrigin, Loadable, RangeSelection, RepoId, RepoLoadsInFlight, RepoState,
-    SidebarDataRequest, SidebarMode,
+    AppNotificationKind, AppState, CommitMultiSelection, ComparisonMark, ComparisonSlot,
+    ConflictFileLoadMode, DiagnosticKind, ForeignDiffOrigin, Loadable, NamedComparison,
+    RangeSelection, RepoId, RepoLoadsInFlight, RepoState, SidebarDataRequest, SidebarMode,
 };
 use crate::msg::{CommitSelectMode, ConflictAutosolveMode, Effect};
 use gitcomet_core::conflict_session::{
@@ -1067,7 +1067,10 @@ pub(super) fn mark_for_comparison(
     label: String,
 ) -> Vec<Effect> {
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
-        repo_state.comparison_mark = Some(crate::model::ComparisonMark { commit_id, label });
+        let endpoint = ComparisonMark { commit_id, label };
+        repo_state.comparison_mark = Some(endpoint.clone());
+        repo_state.comparison_shelf.a = Some(endpoint);
+        repo_state.comparison_shelf.selected_name = None;
     }
     Vec::new()
 }
@@ -1075,6 +1078,150 @@ pub(super) fn mark_for_comparison(
 pub(super) fn clear_comparison_mark(state: &mut AppState, repo_id: RepoId) -> Vec<Effect> {
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
         repo_state.comparison_mark = None;
+        repo_state.comparison_shelf.a = None;
+        repo_state.comparison_shelf.selected_name = None;
+    }
+    Vec::new()
+}
+
+pub(super) fn set_comparison_slot(
+    state: &mut AppState,
+    repo_id: RepoId,
+    slot: ComparisonSlot,
+    endpoint: ComparisonMark,
+) -> Vec<Effect> {
+    let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
+        return Vec::new();
+    };
+    match slot {
+        ComparisonSlot::A => {
+            repo_state.comparison_mark = Some(endpoint.clone());
+            repo_state.comparison_shelf.a = Some(endpoint);
+        }
+        ComparisonSlot::B => repo_state.comparison_shelf.b = Some(endpoint),
+    }
+    repo_state.comparison_shelf.selected_name = None;
+    Vec::new()
+}
+
+pub(super) fn clear_comparison_slot(
+    state: &mut AppState,
+    repo_id: RepoId,
+    slot: ComparisonSlot,
+) -> Vec<Effect> {
+    let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
+        return Vec::new();
+    };
+    match slot {
+        ComparisonSlot::A => {
+            repo_state.comparison_mark = None;
+            repo_state.comparison_shelf.a = None;
+        }
+        ComparisonSlot::B => repo_state.comparison_shelf.b = None,
+    }
+    repo_state.comparison_shelf.selected_name = None;
+    Vec::new()
+}
+
+pub(super) fn swap_comparison_slots(state: &mut AppState, repo_id: RepoId) -> Vec<Effect> {
+    let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
+        return Vec::new();
+    };
+    std::mem::swap(
+        &mut repo_state.comparison_shelf.a,
+        &mut repo_state.comparison_shelf.b,
+    );
+    repo_state.comparison_mark = repo_state.comparison_shelf.a.clone();
+    repo_state.comparison_shelf.selected_name = None;
+    Vec::new()
+}
+
+pub(super) fn add_named_comparison(
+    state: &mut AppState,
+    repo_id: RepoId,
+    name: String,
+    a: ComparisonMark,
+    b: ComparisonMark,
+) -> Vec<Effect> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
+        return Vec::new();
+    };
+    let pair = NamedComparison {
+        name: name.to_string(),
+        a,
+        b,
+    };
+    if let Some(existing) = repo_state
+        .comparison_shelf
+        .named
+        .iter_mut()
+        .find(|existing| existing.name == name)
+    {
+        *existing = pair;
+    } else {
+        repo_state.comparison_shelf.named.push(pair);
+    }
+    Vec::new()
+}
+
+pub(super) fn select_named_comparison(
+    state: &mut AppState,
+    repo_id: RepoId,
+    name: String,
+) -> Vec<Effect> {
+    let name = name.trim();
+    let pair = state
+        .repos
+        .iter()
+        .find(|r| r.id == repo_id)
+        .and_then(|repo| {
+            repo.comparison_shelf
+                .named
+                .iter()
+                .find(|pair| pair.name == name)
+                .cloned()
+        });
+    let Some(pair) = pair else {
+        return Vec::new();
+    };
+
+    if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
+        repo_state.comparison_shelf.a = Some(pair.a.clone());
+        repo_state.comparison_shelf.b = Some(pair.b.clone());
+        repo_state.comparison_shelf.selected_name = Some(pair.name.clone());
+        repo_state.comparison_mark = Some(pair.a.clone());
+    }
+
+    compare_range(
+        state,
+        repo_id,
+        pair.a.commit_id,
+        Some(pair.b.commit_id),
+        pair.a.label,
+        pair.b.label,
+        ComparisonSource::Explicit,
+    )
+}
+
+pub(super) fn remove_named_comparison(
+    state: &mut AppState,
+    repo_id: RepoId,
+    name: String,
+) -> Vec<Effect> {
+    let name = name.trim();
+    let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
+        return Vec::new();
+    };
+    repo_state
+        .comparison_shelf
+        .named
+        .retain(|pair| pair.name != name);
+    if repo_state.comparison_shelf.selected_name.as_deref() == Some(name) {
+        repo_state.comparison_shelf.selected_name = None;
     }
     Vec::new()
 }
@@ -1096,6 +1243,13 @@ pub(super) fn compare_with_marked(
             _ => return Vec::new(),
         }
     };
+    if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
+        repo_state.comparison_shelf.b = Some(ComparisonMark {
+            commit_id: commit_id.clone(),
+            label: label.clone(),
+        });
+        repo_state.comparison_shelf.selected_name = None;
+    }
     compare_range(
         state,
         repo_id,

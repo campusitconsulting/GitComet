@@ -1240,6 +1240,14 @@ pub struct RepoState {
     /// starts a range comparison (mark = base, target = tip). `None` when
     /// nothing is marked.
     pub comparison_mark: Option<ComparisonMark>,
+    /// Explicit A/B endpoints and reusable, named commit comparisons. This is
+    /// deliberately independent from the active `range_selection`: editing the
+    /// shelf must not implicitly navigate, and closing a diff must not discard
+    /// comparisons the user intends to revisit.
+    ///
+    /// `comparison_mark` remains as a compatibility mirror of slot A while the
+    /// existing context menus still read it directly.
+    pub comparison_shelf: ComparisonShelf,
 }
 
 /// A point marked for comparison via the "Mark for comparison" context-menu
@@ -1249,6 +1257,36 @@ pub struct RepoState {
 pub struct ComparisonMark {
     pub commit_id: CommitId,
     pub label: String,
+}
+
+/// One of the two explicit endpoints in the comparison shelf.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ComparisonSlot {
+    A,
+    B,
+}
+
+/// A named, reusable pair of immutable commit endpoints.
+///
+/// Names are unique within a repository. Adding a pair with an existing name
+/// replaces that pair in place, preserving the user's list ordering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NamedComparison {
+    pub name: String,
+    pub a: ComparisonMark,
+    pub b: ComparisonMark,
+}
+
+/// Draft A/B selection plus the small collection of comparisons the user has
+/// explicitly named for later reuse.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ComparisonShelf {
+    pub a: Option<ComparisonMark>,
+    pub b: Option<ComparisonMark>,
+    pub named: Vec<NamedComparison>,
+    /// The named pair most recently selected. Manual edits to either slot
+    /// clear this so the UI cannot imply that a saved pair was changed.
+    pub selected_name: Option<String>,
 }
 
 impl RepoState {
@@ -1333,6 +1371,7 @@ impl RepoState {
             load_epoch: 0,
             pending_force_push_lease: None,
             comparison_mark: None,
+            comparison_shelf: ComparisonShelf::default(),
         }
     }
 

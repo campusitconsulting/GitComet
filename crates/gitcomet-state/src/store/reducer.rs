@@ -101,6 +101,7 @@ pub(crate) fn msg_requires_available_git(msg: &Msg) -> bool {
             | Msg::CompareCommitRange { .. }
             | Msg::CompareWithMarked { .. }
             | Msg::CompareWithWorkingTree { .. }
+            | Msg::SelectNamedComparison { .. }
             | Msg::SelectDiff { .. }
             | Msg::SelectConflictDiff { .. }
             | Msg::SelectWorktreeUncommitted { .. }
@@ -770,6 +771,7 @@ fn is_view_navigation(msg: &Msg) -> bool {
             | Msg::CompareCommitRange { .. }
             | Msg::CompareWithMarked { .. }
             | Msg::CompareWithWorkingTree { .. }
+            | Msg::SelectNamedComparison { .. }
             | Msg::OpenFileContent { .. }
             | Msg::OpenFileEditor { .. }
             // Leaving the editor is a destination of its own, so Back returns to
@@ -983,6 +985,27 @@ fn reduce_inner(
             label,
         } => effects::compare_with_marked(state, repo_id, commit_id, label),
         Msg::ClearComparisonMark { repo_id } => effects::clear_comparison_mark(state, repo_id),
+        Msg::SetComparisonSlot {
+            repo_id,
+            slot,
+            endpoint,
+        } => effects::set_comparison_slot(state, repo_id, slot, endpoint),
+        Msg::ClearComparisonSlot { repo_id, slot } => {
+            effects::clear_comparison_slot(state, repo_id, slot)
+        }
+        Msg::SwapComparisonSlots { repo_id } => effects::swap_comparison_slots(state, repo_id),
+        Msg::AddNamedComparison {
+            repo_id,
+            name,
+            a,
+            b,
+        } => effects::add_named_comparison(state, repo_id, name, a, b),
+        Msg::SelectNamedComparison { repo_id, name } => {
+            effects::select_named_comparison(state, repo_id, name)
+        }
+        Msg::RemoveNamedComparison { repo_id, name } => {
+            effects::remove_named_comparison(state, repo_id, name)
+        }
         Msg::SelectDiff { repo_id, target } => diff_selection::select_diff(state, repo_id, target),
         Msg::OpenInlineSubmoduleDiff {
             repo_id,
@@ -2883,7 +2906,7 @@ mod nav_history_tests {
 #[cfg(test)]
 mod comparison_tests {
     use super::*;
-    use crate::model::{AppState, Loadable, RepoState};
+    use crate::model::{AppState, ComparisonMark, ComparisonSlot, Loadable, RepoState};
     use crate::msg::{CommitSelectMode, Effect};
     use gitcomet_core::domain::{
         Commit, CommitFileChange, CommitId, FileStatusKind, LogPage, RepoSpec,
@@ -3450,5 +3473,186 @@ mod comparison_tests {
                 .any(|e| matches!(e, Effect::LoadRangeFiles { .. })),
             "a commit↔commit comparison is immutable and must not refresh"
         );
+    }
+
+    fn endpoint(id: &str, label: &str) -> ComparisonMark {
+        ComparisonMark {
+            commit_id: CommitId(id.into()),
+            label: label.into(),
+        }
+    }
+
+    #[test]
+    fn explicit_slots_keep_the_legacy_comparison_mark_as_an_a_alias() {
+        let repo_id = RepoId(1);
+        let mut state = state_with_log(repo_id);
+        let a = endpoint("c1", "main");
+        let b = endpoint("c3", "feature");
+
+        dispatch_effects(
+            &mut state,
+            Msg::SetComparisonSlot {
+                repo_id,
+                slot: ComparisonSlot::A,
+                endpoint: a.clone(),
+            },
+        );
+        dispatch_effects(
+            &mut state,
+            Msg::SetComparisonSlot {
+                repo_id,
+                slot: ComparisonSlot::B,
+                endpoint: b.clone(),
+            },
+        );
+
+        let r = repo(&state, repo_id);
+        assert_eq!(r.comparison_shelf.a, Some(a.clone()));
+        assert_eq!(r.comparison_shelf.b, Some(b.clone()));
+        assert_eq!(r.comparison_mark, Some(a));
+        assert!(r.history_state.range_selection.is_none());
+
+        dispatch_effects(&mut state, Msg::SwapComparisonSlots { repo_id });
+        let r = repo(&state, repo_id);
+        assert_eq!(r.comparison_shelf.a, Some(b.clone()));
+        assert_eq!(r.comparison_shelf.b, Some(endpoint("c1", "main")));
+        assert_eq!(r.comparison_mark, Some(b));
+
+        dispatch_effects(
+            &mut state,
+            Msg::ClearComparisonSlot {
+                repo_id,
+                slot: ComparisonSlot::A,
+            },
+        );
+        let r = repo(&state, repo_id);
+        assert_eq!(r.comparison_shelf.a, None);
+        assert_eq!(r.comparison_mark, None);
+    }
+
+    #[test]
+    fn legacy_mark_and_compare_populate_the_explicit_shelf() {
+        let repo_id = RepoId(1);
+        let mut state = state_with_log(repo_id);
+
+        dispatch_effects(
+            &mut state,
+            Msg::MarkForComparison {
+                repo_id,
+                commit_id: CommitId("c1".into()),
+                label: "main".into(),
+            },
+        );
+        dispatch_effects(
+            &mut state,
+            Msg::CompareWithMarked {
+                repo_id,
+                commit_id: CommitId("c3".into()),
+                label: "feature".into(),
+            },
+        );
+
+        let r = repo(&state, repo_id);
+        assert_eq!(r.comparison_shelf.a, Some(endpoint("c1", "main")));
+        assert_eq!(r.comparison_shelf.b, Some(endpoint("c3", "feature")));
+    }
+
+    #[test]
+    fn named_pairs_upsert_in_place_and_select_through_existing_range_pipeline() {
+        let repo_id = RepoId(1);
+        let mut state = state_with_log(repo_id);
+
+        dispatch_effects(
+            &mut state,
+            Msg::AddNamedComparison {
+                repo_id,
+                name: "  review  ".into(),
+                a: endpoint("c1", "main"),
+                b: endpoint("c2", "old feature"),
+            },
+        );
+        dispatch_effects(
+            &mut state,
+            Msg::AddNamedComparison {
+                repo_id,
+                name: "review".into(),
+                a: endpoint("c1", "main"),
+                b: endpoint("c3", "feature"),
+            },
+        );
+        assert_eq!(repo(&state, repo_id).comparison_shelf.named.len(), 1);
+
+        let effects = dispatch_effects(
+            &mut state,
+            Msg::SelectNamedComparison {
+                repo_id,
+                name: " review ".into(),
+            },
+        );
+
+        let r = repo(&state, repo_id);
+        assert_eq!(r.comparison_shelf.selected_name.as_deref(), Some("review"));
+        assert_eq!(r.comparison_shelf.a, Some(endpoint("c1", "main")));
+        assert_eq!(r.comparison_shelf.b, Some(endpoint("c3", "feature")));
+        let range = r
+            .history_state
+            .range_selection
+            .as_ref()
+            .expect("selecting a named pair should open its range");
+        assert_eq!(range.from, CommitId("c1".into()));
+        assert_eq!(range.to, Some(CommitId("c3".into())));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::LoadRangeFiles { from, to, .. }
+                if *from == CommitId("c1".into()) && *to == Some(CommitId("c3".into()))
+        )));
+
+        dispatch_effects(
+            &mut state,
+            Msg::SetComparisonSlot {
+                repo_id,
+                slot: ComparisonSlot::B,
+                endpoint: endpoint("c2", "draft"),
+            },
+        );
+        assert_eq!(repo(&state, repo_id).comparison_shelf.selected_name, None);
+    }
+
+    #[test]
+    fn removing_a_selected_named_pair_keeps_the_open_diff_and_draft_endpoints() {
+        let repo_id = RepoId(1);
+        let mut state = state_with_log(repo_id);
+        dispatch_effects(
+            &mut state,
+            Msg::AddNamedComparison {
+                repo_id,
+                name: "review".into(),
+                a: endpoint("c1", "main"),
+                b: endpoint("c3", "feature"),
+            },
+        );
+        dispatch_effects(
+            &mut state,
+            Msg::SelectNamedComparison {
+                repo_id,
+                name: "review".into(),
+            },
+        );
+        let open_range = repo(&state, repo_id).history_state.range_selection.clone();
+
+        dispatch_effects(
+            &mut state,
+            Msg::RemoveNamedComparison {
+                repo_id,
+                name: " review ".into(),
+            },
+        );
+
+        let r = repo(&state, repo_id);
+        assert!(r.comparison_shelf.named.is_empty());
+        assert_eq!(r.comparison_shelf.selected_name, None);
+        assert_eq!(r.history_state.range_selection, open_range);
+        assert_eq!(r.comparison_shelf.a, Some(endpoint("c1", "main")));
+        assert_eq!(r.comparison_shelf.b, Some(endpoint("c3", "feature")));
     }
 }
