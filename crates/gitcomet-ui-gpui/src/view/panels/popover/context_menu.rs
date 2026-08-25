@@ -441,7 +441,26 @@ impl PopoverHost {
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Worktree(WorktreePopoverKind::Menu { path, branch }),
-            } => Some(worktree::model(*repo_id, path, branch.as_deref())),
+            } => {
+                let head = self
+                    .state
+                    .repos
+                    .iter()
+                    .find(|repo| repo.id == *repo_id)
+                    .and_then(|repo| match &repo.worktrees {
+                        Loadable::Ready(worktrees) => worktrees
+                            .iter()
+                            .find(|worktree| worktree.path == *path)
+                            .and_then(|worktree| worktree.head.clone()),
+                        _ => None,
+                    });
+                Some(worktree::model(
+                    *repo_id,
+                    path,
+                    branch.as_deref(),
+                    head.as_ref(),
+                ))
+            }
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Submodule(SubmodulePopoverKind::SectionMenu),
