@@ -185,6 +185,8 @@ impl GitCometView {
                             details_width: ui_scale::stored_design_units(
                                 Some(this.ui_scale().design_units_from_pixels(this.details_width)),
                             ),
+                            workspace_layout: Some(this.workspace_layout),
+                            review_split_percent: Some(this.review_split_percent),
                             sidebar_collapsed: Some(this.sidebar_collapsed),
                             repo_sidebar_collapsed_items: Some(repo_sidebar_collapsed_items),
                             repo_sidebar_pinned_branches: Some(repo_sidebar_pinned_branches),

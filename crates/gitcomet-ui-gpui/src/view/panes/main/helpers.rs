@@ -3457,6 +3457,7 @@ pub(crate) struct MainPaneView {
     pub(in crate::view) conflict_resolved_outline_background_delay_override:
         Option<std::time::Duration>,
 
+    pub(in crate::view) presentation: super::MainPanePresentation,
     pub(in crate::view) history_view: Entity<super::HistoryView>,
     pub(in crate::view) diff_scroll: UniformListScrollHandle,
     pub(in crate::view) diff_split_right_scroll: UniformListScrollHandle,

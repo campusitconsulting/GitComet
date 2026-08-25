@@ -1158,6 +1158,8 @@ impl SettingsWindowView {
             window_height: None,
             sidebar_width: None,
             details_width: None,
+            workspace_layout: None,
+            review_split_percent: None,
             sidebar_collapsed: None,
             repo_sidebar_collapsed_items: None,
             repo_sidebar_pinned_branches: None,

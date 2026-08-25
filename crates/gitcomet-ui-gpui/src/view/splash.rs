@@ -1079,6 +1079,129 @@ impl GitCometView {
             .into_any_element()
     }
 
+    fn main_workspace_surface(
+        &mut self,
+        theme: AppTheme,
+        bottom_panel: Option<AnyElement>,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let has_bottom_panel = bottom_panel.is_some();
+        div()
+            .flex_1()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .overflow_hidden()
+            .when_some(bottom_panel, |d, bottom_panel| {
+                d.flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .child(stable_cached_fill_view(self.main_pane.clone())),
+                    )
+                    .child(self.terminal_panel_resize_handle(theme, cx))
+                    .child(bottom_panel)
+            })
+            .when(!has_bottom_panel, |d| {
+                d.child(stable_cached_fill_view(self.main_pane.clone()))
+            })
+            .into_any_element()
+    }
+
+    fn details_workspace_surface(&self, theme: AppTheme) -> AnyElement {
+        div()
+            .id("details_pane")
+            .debug_selector(|| "details_pane".to_string())
+            .relative()
+            .w(self.details_render_width)
+            .min_h(px(0.0))
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .when(self.details_collapsed, |d| {
+                d.border_l_1().border_color(theme.colors.stroke.subtle)
+            })
+            .when(!self.details_collapsed, |d| {
+                d.child(
+                    div()
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .child(self.details_pane.clone()),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn workspace_card_body(
+        &mut self,
+        theme: AppTheme,
+        bottom_panel: Option<AnyElement>,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let main_surface = self.main_workspace_surface(theme, bottom_panel, cx);
+        let details_surface = self.details_workspace_surface(theme);
+
+        if self.workspace_layout == session::WorkspaceLayoutPreset::Classic {
+            return div()
+                .size_full()
+                .flex()
+                .flex_row()
+                .child(main_surface)
+                .child(details_surface)
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .right(
+                            (self.details_render_width - self.pane_resize_handle_width() / 2.0)
+                                .max(px(0.0)),
+                        )
+                        .child(self.pane_resize_handle(
+                            theme,
+                            "pane_resize_details",
+                            PaneResizeHandle::Details,
+                            cx,
+                        )),
+                )
+                .into_any_element();
+        }
+
+        let history_fraction = f32::from(self.review_split_percent) / 100.0;
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .h(relative(history_fraction))
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .child(stable_cached_fill_view(self.history_view.clone())),
+            )
+            // Static boundary for the first composition checkpoint. The next
+            // slice replaces it with a drag handle backed by the persisted
+            // `review_split_percent` field.
+            .child(div().h(px(1.0)).w_full().bg(theme.colors.stroke.default))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .flex()
+                    .flex_row()
+                    .child(
+                        div()
+                            .h_full()
+                            .border_r_1()
+                            .border_color(theme.colors.stroke.subtle)
+                            .child(details_surface),
+                    )
+                    .child(main_surface),
+            )
+            .into_any_element()
+    }
+
     pub(super) fn center_content(
         &mut self,
         window: &mut Window,
@@ -1097,7 +1220,7 @@ impl GitCometView {
         if renders_full_chrome(self.view_mode) {
             // Terminal and/or reflog — see `render_bottom_panel` for which.
             let bottom_panel = self.render_bottom_panel(theme, window, cx);
-            let has_bottom_panel = bottom_panel.is_some();
+            let workspace_card_body = self.workspace_card_body(theme, bottom_panel, cx);
             let content = div()
                 .flex()
                 .flex_col()
@@ -1175,68 +1298,7 @@ impl GitCometView {
                                 .border_color(theme.colors.stroke.default)
                                 .overflow_hidden()
                                 .bg(theme.colors.surface.canvas)
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w(px(0.0))
-                                        .min_h(px(0.0))
-                                        .overflow_hidden()
-                                        .when_some(bottom_panel, |d, bottom_panel| {
-                                            d.flex()
-                                                .flex_col()
-                                                .child(div().flex_1().min_h(px(0.0)).child(
-                                                    stable_cached_fill_view(self.main_pane.clone()),
-                                                ))
-                                                .child(self.terminal_panel_resize_handle(theme, cx))
-                                                .child(bottom_panel)
-                                        })
-                                        .when(!has_bottom_panel, |d| {
-                                            d.child(stable_cached_fill_view(self.main_pane.clone()))
-                                        }),
-                                )
-                                .child(
-                                    div()
-                                        .id("details_pane")
-                                        .debug_selector(|| "details_pane".to_string())
-                                        .relative()
-                                        .w(self.details_render_width)
-                                        .min_h(px(0.0))
-                                        .flex()
-                                        .flex_col()
-                                        .overflow_hidden()
-                                        .when(self.details_collapsed, |d| {
-                                            // The resize handle is hidden while collapsed, so
-                                            // keep a hairline between main and the strip.
-                                            d.border_l_1().border_color(theme.colors.stroke.subtle)
-                                        })
-                                        .when(!self.details_collapsed, |d| {
-                                            d.child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_h(px(0.0))
-                                                    .child(self.details_pane.clone()),
-                                            )
-                                        }),
-                                )
-                                .child(
-                                    // Keep the full resize hit target without reserving a
-                                    // visible strip between the main and details panes.
-                                    div()
-                                        .absolute()
-                                        .top_0()
-                                        .bottom_0()
-                                        .right(
-                                            (self.details_render_width
-                                                - self.pane_resize_handle_width() / 2.0)
-                                                .max(px(0.0)),
-                                        )
-                                        .child(self.pane_resize_handle(
-                                            theme,
-                                            "pane_resize_details",
-                                            PaneResizeHandle::Details,
-                                            cx,
-                                        )),
-                                )
+                                .child(workspace_card_body)
                                 .child(card_corner_caps(
                                     px((main_content_card_radius(theme) - 1.0).max(0.0)),
                                     theme.colors.surface.chrome,

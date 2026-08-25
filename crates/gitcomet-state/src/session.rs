@@ -11,6 +11,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::{env, fs, io};
 
+/// Top-level workspace compositions. The review presets keep history visible
+/// while a diff is open; `Classic` preserves the upstream GitComet layout.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceLayoutPreset {
+    SourceTreeReview,
+    WideReview,
+    #[serde(other)]
+    Classic,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct UiSession {
     pub open_repos: Vec<PathBuf>,
@@ -30,6 +41,9 @@ pub struct UiSession {
     pub window_height: Option<u32>,
     pub sidebar_width: Option<u32>,
     pub details_width: Option<u32>,
+    pub workspace_layout: Option<WorkspaceLayoutPreset>,
+    /// Percentage of the review workspace height assigned to history.
+    pub review_split_percent: Option<u16>,
     pub sidebar_collapsed: Option<bool>,
     pub theme_mode: Option<String>,
     pub ui_scale_percent: Option<u32>,
@@ -171,6 +185,8 @@ struct UiSessionFile {
     window_height: Option<u32>,
     sidebar_width: Option<u32>,
     details_width: Option<u32>,
+    workspace_layout: Option<WorkspaceLayoutPreset>,
+    review_split_percent: Option<u16>,
     sidebar_collapsed: Option<bool>,
     theme_mode: Option<String>,
     ui_scale_percent: Option<u32>,
@@ -252,6 +268,9 @@ const MAX_RECENT_REPOS: usize = 15;
 const DEFAULT_UI_SCALE_PERCENT: u32 = 100;
 const MIN_UI_SCALE_PERCENT: u32 = 80;
 const MAX_UI_SCALE_PERCENT: u32 = 200;
+pub const DEFAULT_REVIEW_SPLIT_PERCENT: u16 = 56;
+pub const MIN_REVIEW_SPLIT_PERCENT: u16 = 20;
+pub const MAX_REVIEW_SPLIT_PERCENT: u16 = 80;
 #[cfg(unix)]
 const SESSION_PATH_BYTES_PREFIX: &str = "gitcomet-path-bytes:";
 #[cfg(windows)]
@@ -293,6 +312,10 @@ pub fn load_from_path(path: &Path) -> UiSession {
         window_height: file.window_height,
         sidebar_width: file.sidebar_width,
         details_width: file.details_width,
+        workspace_layout: file.workspace_layout,
+        review_split_percent: file
+            .review_split_percent
+            .map(normalize_review_split_percent),
         sidebar_collapsed: file.sidebar_collapsed,
         theme_mode: file.theme_mode,
         ui_scale_percent: file.ui_scale_percent,
@@ -734,6 +757,8 @@ pub struct UiSettings {
     pub window_height: Option<u32>,
     pub sidebar_width: Option<u32>,
     pub details_width: Option<u32>,
+    pub workspace_layout: Option<WorkspaceLayoutPreset>,
+    pub review_split_percent: Option<u16>,
     pub sidebar_collapsed: Option<bool>,
     pub repo_sidebar_collapsed_items: Option<BTreeMap<PathBuf, BTreeSet<String>>>,
     pub repo_sidebar_pinned_branches: Option<BTreeMap<PathBuf, BTreeSet<String>>>,
@@ -805,6 +830,12 @@ pub fn persist_ui_settings_to_path(settings: UiSettings, path: &Path) -> io::Res
         }
         if let Some(w) = settings.details_width {
             file.details_width = Some(w);
+        }
+        if let Some(layout) = settings.workspace_layout {
+            file.workspace_layout = Some(layout);
+        }
+        if let Some(percent) = settings.review_split_percent {
+            file.review_split_percent = Some(normalize_review_split_percent(percent));
         }
         if let Some(collapsed) = settings.sidebar_collapsed {
             file.sidebar_collapsed = Some(collapsed);
@@ -958,6 +989,10 @@ pub fn persist_ui_settings_to_path(settings: UiSettings, path: &Path) -> io::Res
 
         persist_to_path(path, &file)
     })
+}
+
+pub fn normalize_review_split_percent(percent: u16) -> u16 {
+    percent.clamp(MIN_REVIEW_SPLIT_PERCENT, MAX_REVIEW_SPLIT_PERCENT)
 }
 
 static SESSION_FILE_PERSIST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1864,6 +1899,46 @@ mod tests {
         ));
         let _ = fs::create_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn review_workspace_settings_round_trip_and_clamp_split() {
+        let dir = unique_session_test_dir("review-workspace-round-trip");
+        let path = dir.join("session.json");
+
+        persist_ui_settings_to_path(
+            UiSettings {
+                workspace_layout: Some(WorkspaceLayoutPreset::SourceTreeReview),
+                review_split_percent: Some(95),
+                ..UiSettings::default()
+            },
+            &path,
+        )
+        .expect("persist review workspace settings");
+
+        let loaded = load_from_path(&path);
+        assert_eq!(
+            loaded.workspace_layout,
+            Some(WorkspaceLayoutPreset::SourceTreeReview)
+        );
+        assert_eq!(loaded.review_split_percent, Some(MAX_REVIEW_SPLIT_PERCENT));
+    }
+
+    #[test]
+    fn unknown_workspace_layout_falls_back_to_classic() {
+        let dir = unique_session_test_dir("unknown-workspace-layout");
+        let path = dir.join("session.json");
+        fs::write(
+            &path,
+            r#"{"version":3,"open_repos":[],"active_repo":null,"workspace_layout":"future_layout"}"#,
+        )
+        .expect("seed session file");
+
+        let loaded = load_from_path(&path);
+        assert_eq!(
+            loaded.workspace_layout,
+            Some(WorkspaceLayoutPreset::Classic)
+        );
     }
 
     fn assert_session_writer_waits_for_shared_lock(

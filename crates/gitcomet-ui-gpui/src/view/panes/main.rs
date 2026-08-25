@@ -26,6 +26,19 @@ pub(in crate::view) use diff_search::{
 pub(in crate::view) use file_editor::*;
 pub(crate) use helpers::*;
 
+/// Controls which surface the root workspace expects this pane to own.
+///
+/// The upstream layout lets `MainPaneView` switch between history and diff on
+/// its own. SourceTree-style layouts mount the existing `HistoryView` in the
+/// root workspace and reserve this pane for the review surface, so rendering
+/// history here as well would mount the same entity twice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::view) enum MainPanePresentation {
+    #[default]
+    LegacyAuto,
+    DiffOnly,
+}
+
 #[cfg(not(test))]
 const CONFLICT_RESOLVED_OUTLINE_DEBOUNCE_MS: u64 = 140;
 const FOCUSED_MERGETOOL_EXIT_SUCCESS: i32 = 0;
@@ -99,6 +112,16 @@ impl Render for MainPaneView {
             self.diff_view(window, cx).into_any_element()
         } else if in_rebase {
             self.interactive_rebase_view(window, cx).into_any_element()
+        } else if self.presentation == MainPanePresentation::DiffOnly {
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(self.theme.colors.foreground.secondary)
+                .child("Select a changed file to open its diff")
+                .into_any_element()
         } else {
             self.history_view.clone().into_any_element()
         };

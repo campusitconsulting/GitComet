@@ -1873,6 +1873,7 @@ impl MainPaneView {
             conflict_resolved_outline_stash: None,
             #[cfg(test)]
             conflict_resolved_outline_background_delay_override: None,
+            presentation: super::MainPanePresentation::LegacyAuto,
             history_view,
             diff_scroll: UniformListScrollHandle::default(),
             diff_split_right_scroll: UniformListScrollHandle::default(),
@@ -1997,6 +1998,26 @@ impl MainPaneView {
         self.history_view.update(cx, |view, cx| {
             view.apply_ui_scale_percent(previous_percent, next_percent, cx);
         });
+        cx.notify();
+    }
+
+    /// Reuses the one history entity owned by this pane in a root-level layout.
+    /// The caller must set [`MainPanePresentation::DiffOnly`] before mounting
+    /// the returned entity elsewhere, otherwise the legacy branch may render
+    /// the same entity inside `MainPaneView` too.
+    pub(in crate::view) fn history_view_entity(&self) -> Entity<super::HistoryView> {
+        self.history_view.clone()
+    }
+
+    pub(in crate::view) fn set_presentation(
+        &mut self,
+        presentation: super::MainPanePresentation,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.presentation == presentation {
+            return;
+        }
+        self.presentation = presentation;
         cx.notify();
     }
 

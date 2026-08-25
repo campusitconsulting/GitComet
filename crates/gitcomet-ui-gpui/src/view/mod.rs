@@ -1,3 +1,4 @@
+use self::panes::main::MainPanePresentation;
 use crate::app::{
     CloseWindow, DecreaseUiScale, IncreaseUiScale, NewWindow, OpenRepository, ResetUiScale,
 };
@@ -1367,6 +1368,14 @@ impl GitCometView {
 
         let restored_sidebar_width = ui_session.sidebar_width;
         let restored_details_width = ui_session.details_width;
+        let workspace_layout = ui_session
+            .workspace_layout
+            .unwrap_or(gitcomet_state::session::WorkspaceLayoutPreset::SourceTreeReview);
+        let review_split_percent = gitcomet_state::session::normalize_review_split_percent(
+            ui_session
+                .review_split_percent
+                .unwrap_or(gitcomet_state::session::DEFAULT_REVIEW_SPLIT_PERCENT),
+        );
         let restored_sidebar_collapsed = ui_session.sidebar_collapsed.unwrap_or(false);
         let _ = crate::theme::ensure_user_themes_dir_exists();
         let theme_mode = ui_session
@@ -1591,7 +1600,7 @@ impl GitCometView {
                 cx,
             )
         });
-        main_pane.update(cx, |pane, _cx| {
+        main_pane.update(cx, |pane, cx| {
             pane.mergetool_auto_advance = ui_session.mergetool_auto_advance.unwrap_or(true);
             pane.mergetool_collapse_unchanged =
                 ui_session.mergetool_collapse_unchanged.unwrap_or(false);
@@ -1600,7 +1609,13 @@ impl GitCometView {
             pane.mergetool_show_line_numbers =
                 ui_session.mergetool_show_line_numbers.unwrap_or(true);
             pane.mergetool_view_three_way = ui_session.mergetool_view_three_way.unwrap_or(true);
+            if workspace_layout != gitcomet_state::session::WorkspaceLayoutPreset::Classic
+                && renders_full_chrome(view_mode)
+            {
+                pane.set_presentation(MainPanePresentation::DiffOnly, cx);
+            }
         });
+        let history_view = main_pane.read(cx).history_view_entity();
         let details_pane = cx.new(|cx| {
             DetailsPaneView::new(
                 Arc::clone(&store),
@@ -1886,9 +1901,12 @@ impl GitCometView {
             view_mode,
             theme_mode,
             theme: initial_theme,
+            workspace_layout,
+            review_split_percent,
             title_bar,
             sidebar_pane,
             main_pane,
+            history_view,
             details_pane,
             repo_tabs_bar,
             action_bar,

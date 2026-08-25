@@ -226,6 +226,9 @@ Built-in themes are embedded in the GitComet binary. Custom themes are loaded fr
 
 The full theme guide, including file locations, schema details, example bundles, and override behavior, now lives in [THEMES.md](docs/themes.md).
 
+The local-review fork roadmap and its SourceTree-style workspace boundary are
+documented in [Git Browser downstream roadmap](docs/git-browser-downstream.md).
+
 ### Crash logs
 
 GitComet writes panic logs and abnormal-exit recovery state to:
