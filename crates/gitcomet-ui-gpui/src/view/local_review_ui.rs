@@ -39,11 +39,11 @@ pub(super) fn range_context(repo: &RepoState) -> Option<LocalReviewRangeContext>
     let range_head = range.to.as_ref()?;
     let shelf_a = repo.comparison_shelf.a.as_ref()?;
     let shelf_b = repo.comparison_shelf.b.as_ref()?;
-    if shelf_a.commit_id != range.from || shelf_b.commit_id != *range_head {
+    if shelf_a.commit_id() != Some(&range.from) || shelf_b.commit_id() != Some(range_head) {
         return None;
     }
-    let base_oid = shelf_a.commit_id.as_ref().to_string();
-    let head_oid = shelf_b.commit_id.as_ref().to_string();
+    let base_oid = shelf_a.commit_id()?.as_ref().to_string();
+    let head_oid = shelf_b.commit_id()?.as_ref().to_string();
     Some(LocalReviewRangeContext {
         repo_id: repo.id,
         workdir: repo.spec.workdir.clone(),
@@ -136,6 +136,67 @@ pub(super) fn next_comment_id(now_unix_ms: i64) -> String {
     format!("ui-{now_unix_ms}-{sequence}")
 }
 
+pub(super) fn loaded_session(
+    repo: &RepoState,
+) -> Option<&gitcomet_state::local_review::LocalReviewSession> {
+    let gitcomet_state::model::Loadable::Ready(Some(session)) = &repo.local_review.session else {
+        return None;
+    };
+    Some(session)
+}
+
+/// Count cached comments anchored to one rendered patch row. Unified context
+/// rows accept anchors from both sides; a split column only accepts its side.
+/// This is memory-only and safe to call from row rendering.
+pub(super) fn comment_count_for_diff_line(
+    session: Option<&gitcomet_state::local_review::LocalReviewSession>,
+    path: &std::path::Path,
+    line: &AnnotatedDiffLine,
+    region: DiffTextRegion,
+) -> usize {
+    let Some(session) = session else { return 0 };
+    session
+        .comments
+        .iter()
+        .filter(|comment| comment.anchor.path == path)
+        .filter(|comment| match (region, comment.anchor.side) {
+            (DiffTextRegion::SplitLeft, Some(ReviewSide::Old)) => {
+                comment.anchor.old_line == line.old_line
+            }
+            (DiffTextRegion::SplitRight, Some(ReviewSide::New)) => {
+                comment.anchor.new_line == line.new_line
+            }
+            (DiffTextRegion::Inline, Some(ReviewSide::Old)) => {
+                comment.anchor.old_line == line.old_line
+            }
+            (DiffTextRegion::Inline, Some(ReviewSide::New)) => {
+                comment.anchor.new_line == line.new_line
+            }
+            (_, None) => false,
+            _ => false,
+        })
+        .count()
+}
+
+pub(super) fn comment_count_for_anchor(
+    session: Option<&gitcomet_state::local_review::LocalReviewSession>,
+    path: &std::path::Path,
+    side: ReviewSide,
+    line: Option<u32>,
+) -> usize {
+    let Some(session) = session else { return 0 };
+    let Some(line) = line else { return 0 };
+    session
+        .comments
+        .iter()
+        .filter(|comment| comment.anchor.path == path && comment.anchor.side == Some(side))
+        .filter(|comment| match side {
+            ReviewSide::Old => comment.anchor.old_line == Some(line),
+            ReviewSide::New => comment.anchor.new_line == Some(line),
+        })
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,19 +219,13 @@ mod tests {
                 workdir: "/tmp/local-review-ui".into(),
             },
         );
-        let a = ComparisonMark {
-            commit_id: CommitId("aaaaaaaa".into()),
-            label: "main".into(),
-        };
-        let b = ComparisonMark {
-            commit_id: CommitId("bbbbbbbb".into()),
-            label: "agent/worktree".into(),
-        };
+        let a = ComparisonMark::commit(CommitId("aaaaaaaa".into()), "main");
+        let b = ComparisonMark::commit(CommitId("bbbbbbbb".into()), "agent/worktree");
         repo.comparison_shelf.a = Some(a.clone());
         repo.comparison_shelf.b = Some(b.clone());
         repo.history_state.range_selection = Some(RangeSelection {
-            from: a.commit_id,
-            to: Some(b.commit_id),
+            from: a.commit_id().cloned().expect("commit A"),
+            to: b.commit_id().cloned(),
             from_label: a.label,
             to_label: b.label,
         });
@@ -235,5 +290,48 @@ mod tests {
         let mut repo = repo();
         repo.history_state.range_selection.as_mut().unwrap().to = Some(CommitId("cccccccc".into()));
         assert!(range_context(&repo).is_none());
+    }
+
+    #[test]
+    fn marker_counts_follow_path_side_and_line_for_inline_and_split() {
+        let repo = repo();
+        let context = range_context(&repo).expect("range context");
+        let draft = draft_for_diff_line(
+            &context,
+            "src/lib.rs".into(),
+            &line(DiffLineKind::Add, None, Some(42)),
+            DiffTextRegion::Inline,
+        )
+        .expect("draft");
+        let (mut session, comment) =
+            persistence_payload(&draft, "new-side".into(), "new-1".into(), 1);
+        session.comments.push(comment);
+        let mut old = session.comments[0].clone();
+        old.id = "old-1".into();
+        old.anchor.side = Some(ReviewSide::Old);
+        old.anchor.old_line = Some(17);
+        old.anchor.new_line = None;
+        old.status = ReviewStatus::Resolved;
+        session.comments.push(old);
+
+        let context_line = line(DiffLineKind::Context, Some(17), Some(42));
+        assert_eq!(
+            comment_count_for_diff_line(
+                Some(&session),
+                std::path::Path::new("src/lib.rs"),
+                &context_line,
+                DiffTextRegion::Inline,
+            ),
+            2
+        );
+        assert_eq!(
+            comment_count_for_anchor(
+                Some(&session),
+                std::path::Path::new("src/lib.rs"),
+                ReviewSide::New,
+                Some(42),
+            ),
+            1
+        );
     }
 }

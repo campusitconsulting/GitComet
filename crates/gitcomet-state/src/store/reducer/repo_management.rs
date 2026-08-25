@@ -376,6 +376,11 @@ pub(super) fn open_repo(id_alloc: &AtomicU64, state: &mut AppState, path: PathBu
     state.repos.push({
         let mut repo_state = crate::model::RepoState::new_opening(repo_id, spec.clone());
         repo_state.history_state.history_scope = history_mode;
+        repo_state.history_state.history_order = session_preferences
+            .repo_history_orders
+            .get(&workdir_key)
+            .copied()
+            .unwrap_or_default();
         repo_state.history_state.history_author_filter = session_preferences
             .repo_history_author_filters
             .get(&workdir_key)
@@ -477,6 +482,11 @@ pub(super) fn restore_session(
         let mut repo_state = {
             let mut repo_state = crate::model::RepoState::new_opening(repo_id, spec.clone());
             repo_state.history_state.history_scope = history_mode;
+            repo_state.history_state.history_order = session_preferences
+                .repo_history_orders
+                .get(&workdir_key)
+                .copied()
+                .unwrap_or_default();
             repo_state.history_state.history_author_filter = session_preferences
                 .repo_history_author_filters
                 .get(&workdir_key)

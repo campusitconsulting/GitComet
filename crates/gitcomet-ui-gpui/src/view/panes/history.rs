@@ -1,11 +1,11 @@
 use super::super::*;
 use crate::view::caches::{
-    HistoryListPlan, HistoryListPlanCache, HistoryShortShaVm, HistoryVisibleIndices, HistoryWhenVm,
-    HistoryWorktreeRowAnchor, analyze_history_stashes, build_history_branch_containment_bits,
-    build_history_branch_ref_items_by_target, build_history_branch_text_by_target,
-    build_history_tag_names_by_target, build_history_visible_indices,
-    history_ref_items_from_displayed_refs, next_history_stash_tip_for_commit_ix,
-    related_commit_contains,
+    HistoryListPlan, HistoryListPlanCache, HistoryListRow, HistoryShortShaVm,
+    HistoryVisibleIndices, HistoryWhenVm, HistoryWorktreeRowAnchor, analyze_history_stashes,
+    build_history_branch_containment_bits, build_history_branch_ref_items_by_target,
+    build_history_branch_text_by_target, build_history_tag_names_by_target,
+    build_history_visible_indices, history_ref_items_from_displayed_refs,
+    next_history_stash_tip_for_commit_ix, related_commit_contains,
 };
 use rustc_hash::FxHasher;
 use smallvec::SmallVec;
@@ -703,6 +703,40 @@ struct PendingHistoryReveal {
     worktree_path: Option<PathBuf>,
 }
 
+/// A viewport position expressed in history semantics rather than in the row
+/// number that happened to contain it before a refresh. New commits and linked
+/// worktree rows may be inserted above this commit while the log reloads.
+#[derive(Clone, Debug, PartialEq)]
+struct HistoryViewportAnchor {
+    repo_id: RepoId,
+    commit_id: CommitId,
+    /// Pixel displacement of the row's top from the viewport's top. GPUI uses
+    /// negative offsets for a row that is partially scrolled out of view.
+    offset_in_row: Pixels,
+}
+
+fn history_viewport_target_list_ix(
+    commit_id: &CommitId,
+    visible_ix_by_commit: &FxHashMap<CommitId, usize>,
+    plan: &HistoryListPlan,
+) -> Option<usize> {
+    visible_ix_by_commit
+        .get(commit_id)
+        .copied()
+        .map(|visible_ix| plan.list_ix_for_visible(visible_ix))
+}
+
+fn history_viewport_target_offset(
+    list_ix: usize,
+    list_len: usize,
+    row_height: Pixels,
+    viewport_height: Pixels,
+    offset_in_row: Pixels,
+) -> Pixels {
+    let max_offset = (row_height * list_len as f32 - viewport_height).max(px(0.0));
+    (-(row_height * list_ix as f32) + offset_in_row).clamp(-max_offset, px(0.0))
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct PendingHistoryRevealDecision {
     set_scope: Option<LogScope>,
@@ -1105,6 +1139,7 @@ pub(in super::super) struct HistoryView {
     history_selected_list_index_cache: Option<HistorySelectedListIndexCache>,
     selected_branch: Option<SelectedBranch>,
     pending_history_reveal: Option<PendingHistoryReveal>,
+    pending_viewport_anchor: Option<HistoryViewportAnchor>,
     /// Last browse-point commit we scrolled to, so a new one is revealed only when
     /// the historical browse point actually changes.
     last_browse_commit: Option<CommitId>,
@@ -1193,6 +1228,44 @@ impl HistoryView {
             let next = Arc::clone(&model.read(cx).state);
             let next_fingerprint = Self::notify_fingerprint_for(&next, this.history_show_tags);
             let changed = next_fingerprint != this.notify_fingerprint;
+
+            // Capture the row before replacing the state snapshot. Keeping the
+            // scroll handle alone preserves only a numeric offset; if a fetch
+            // inserts commits above the viewport, that offset points at a
+            // different commit. Scope/repository changes are intentional
+            // navigation and must not be pulled back to the previous list.
+            let current_log_identity = this.active_repo().map(|repo| {
+                (
+                    repo.id,
+                    repo.history_state.history_scope,
+                    repo.history_state.log_rev,
+                )
+            });
+            let next_log_identity = next.active_repo.and_then(|repo_id| {
+                next.repos
+                    .iter()
+                    .find(|repo| repo.id == repo_id)
+                    .map(|repo| {
+                        (
+                            repo.id,
+                            repo.history_state.history_scope,
+                            repo.history_state.log_rev,
+                        )
+                    })
+            });
+            let same_history_with_new_rows = matches!(
+                (current_log_identity, next_log_identity),
+                (Some((current_id, current_scope, current_rev)), Some((next_id, next_scope, next_rev)))
+                    if current_id == next_id
+                        && current_scope == next_scope
+                        && current_rev != next_rev
+            );
+            if same_history_with_new_rows
+                && this.pending_viewport_anchor.is_none()
+                && this.pending_history_reveal.is_none()
+            {
+                this.pending_viewport_anchor = this.capture_history_viewport_anchor();
+            }
             this.state = next;
 
             // When the historical browse point changes, scroll the history to that
@@ -1301,6 +1374,7 @@ impl HistoryView {
             history_selected_list_index_cache: None,
             selected_branch: None,
             pending_history_reveal: None,
+            pending_viewport_anchor: None,
             last_browse_commit: None,
             last_resolved_reveal_commit: None,
             history_worktree_summary_cache: None,
@@ -2531,6 +2605,92 @@ impl HistoryView {
         }
     }
 
+    fn capture_history_viewport_anchor(&mut self) -> Option<HistoryViewportAnchor> {
+        let repo = self.active_repo()?;
+        let repo_id = repo.id;
+        let page = Self::display_log_page_for_repo(repo)?;
+        let plan = self.ensure_history_list_plan();
+        let cache = self
+            .history_cache
+            .as_ref()
+            .filter(|cache| cache.base.request.repo_id == repo_id)?;
+        let (list_ix, offset_in_row) = self
+            .history_scroll
+            .0
+            .borrow()
+            .base_handle
+            .logical_scroll_top();
+        let HistoryListRow::Commit { visible_ix } = plan.row_at(list_ix)? else {
+            // Synthetic working-tree/worktree rows do not have a stable commit
+            // identity of their own. Keeping the numeric scroll offset is the
+            // least surprising fallback for them.
+            return None;
+        };
+        let commit_ix = cache.base.visible_indices.get(visible_ix)?;
+        let commit_id = page.commits.get(commit_ix)?.id.clone();
+        Some(HistoryViewportAnchor {
+            repo_id,
+            commit_id,
+            offset_in_row,
+        })
+    }
+
+    /// Restore an anchor after the replacement cache is installed. The list is
+    /// uniform-height, so setting the base handle directly preserves the
+    /// partially visible fraction of the row as well as its identity.
+    fn restore_history_viewport_anchor(&mut self) {
+        let Some(anchor) = self.pending_viewport_anchor.clone() else {
+            return;
+        };
+        let Some(repo) = self.active_repo() else {
+            self.pending_viewport_anchor = None;
+            return;
+        };
+        if repo.id != anchor.repo_id {
+            self.pending_viewport_anchor = None;
+            return;
+        }
+        let Some(cache) = self.history_cache.as_ref() else {
+            return;
+        };
+        let visible_len = cache.base.visible_indices.len();
+        let visible_ix_by_commit = Arc::clone(&cache.base.visible_ix_by_commit);
+        let plan = self.ensure_history_list_plan();
+        let Some(list_ix) = history_viewport_target_list_ix(
+            &anchor.commit_id,
+            visible_ix_by_commit.as_ref(),
+            &plan,
+        ) else {
+            // The replacement page no longer contains the commit. Leave GPUI's
+            // numeric offset untouched as the documented fallback.
+            self.pending_viewport_anchor = None;
+            return;
+        };
+
+        let list_len = plan.list_len(visible_len);
+        let metrics =
+            crate::view::history_graph_style::history_graph_metrics(self.history_graph_style);
+        let row_height = history_scaled_px(metrics.row_height, self.ui_scale_percent);
+        let scroll_state = self.history_scroll.0.borrow();
+        let base_handle = scroll_state.base_handle.clone();
+        let viewport_height = scroll_state
+            .last_item_size
+            .map(|size| size.item.height)
+            .unwrap_or_else(|| base_handle.bounds().size.height);
+        drop(scroll_state);
+
+        let target_y = history_viewport_target_offset(
+            list_ix,
+            list_len,
+            row_height,
+            viewport_height,
+            anchor.offset_in_row,
+        );
+        let current = base_handle.offset();
+        base_handle.set_offset(point(current.x, target_y));
+        self.pending_viewport_anchor = None;
+    }
+
     pub(in super::super) fn ensure_history_cache(&mut self, cx: &mut gpui::Context<Self>) {
         let Some(repo) = self.active_repo() else {
             self.history_cache_inflight = None;
@@ -2687,6 +2847,8 @@ impl HistoryView {
 
                     this.history_cache_inflight = None;
                     this.history_cache = Some(rebuild);
+                    this.history_list_plan_cache = None;
+                    this.restore_history_viewport_anchor();
                     cx.notify();
                 });
             },
@@ -3177,6 +3339,54 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::time::{Duration, Instant, SystemTime};
+
+    #[test]
+    fn semantic_viewport_anchor_follows_its_commit_when_rows_are_inserted_above() {
+        let anchored = CommitId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into());
+        let before = HistoryListPlan::new(false, Vec::new());
+        let after = HistoryListPlan::new(true, Vec::new());
+        let mut before_indices = FxHashMap::default();
+        before_indices.insert(anchored.clone(), 4);
+        let mut after_indices = FxHashMap::default();
+        // A new commit was inserted above the anchor, and the working-tree
+        // summary row appeared too: its numeric row moves by two.
+        after_indices.insert(anchored.clone(), 5);
+
+        assert_eq!(
+            history_viewport_target_list_ix(&anchored, &before_indices, &before),
+            Some(4)
+        );
+        assert_eq!(
+            history_viewport_target_list_ix(&anchored, &after_indices, &after),
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn semantic_viewport_anchor_preserves_partial_row_offset_and_clamps_at_end() {
+        assert_eq!(
+            history_viewport_target_offset(6, 20, px(20.0), px(100.0), px(-7.0)),
+            px(-127.0)
+        );
+        assert_eq!(
+            history_viewport_target_offset(19, 20, px(20.0), px(100.0), px(-7.0)),
+            px(-300.0),
+            "the last row cannot be placed past the list's maximum offset"
+        );
+    }
+
+    #[test]
+    fn missing_semantic_viewport_commit_uses_the_existing_numeric_offset() {
+        let missing = CommitId("ffffffffffffffffffffffffffffffffffffffff".into());
+        assert_eq!(
+            history_viewport_target_list_ix(
+                &missing,
+                &FxHashMap::default(),
+                &HistoryListPlan::new(false, Vec::new()),
+            ),
+            None
+        );
+    }
 
     /// The linked-worktree rows live in this table, so the two revs behind them
     /// have to move the fingerprint. Without them a finished scan -- or a row

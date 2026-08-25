@@ -39,6 +39,7 @@ fn expect_log_reply(
         .loads_in_flight
         .request_log(crate::model::PendingLogLoad {
             scope,
+            order: gitcomet_core::domain::HistoryOrder::Date,
             author: author.map(str::to_owned),
             limit: 200,
             cursor,
@@ -880,6 +881,45 @@ fn external_git_state_refresh_is_coalesced_and_replayed_once() {
 }
 
 #[test]
+fn automatic_git_state_refresh_preserves_both_comparison_slots_and_named_selection() {
+    let mut repos: FxHashMap<RepoId, Arc<dyn GitRepository>> = FxHashMap::default();
+    let id_alloc = AtomicU64::new(1);
+    let mut state = AppState::default();
+    let repo_id = RepoId(1);
+    state.repos.push(RepoState::new_opening(
+        repo_id,
+        RepoSpec {
+            workdir: PathBuf::from("/tmp/repo"),
+        },
+    ));
+    state.active_repo = Some(repo_id);
+    let a = crate::model::ComparisonMark::commit(CommitId("aaaaaaaa".into()), "A");
+    let b = crate::model::ComparisonMark::commit(CommitId("bbbbbbbb".into()), "B");
+    state.repos[0].comparison_mark = Some(a.clone());
+    state.repos[0].comparison_shelf.a = Some(a.clone());
+    state.repos[0].comparison_shelf.b = Some(b.clone());
+    state.repos[0].comparison_shelf.selected_name = Some("review".to_string());
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::RepoExternallyChanged {
+            repo_id,
+            change: crate::msg::RepoExternalChange::GitState,
+        },
+    );
+
+    assert_eq!(state.repos[0].comparison_mark.as_ref(), Some(&a));
+    assert_eq!(state.repos[0].comparison_shelf.a.as_ref(), Some(&a));
+    assert_eq!(state.repos[0].comparison_shelf.b.as_ref(), Some(&b));
+    assert_eq!(
+        state.repos[0].comparison_shelf.selected_name.as_deref(),
+        Some("review")
+    );
+}
+
+#[test]
 fn external_worktree_refresh_replays_coalesced_change_then_settles() {
     let mut repos: FxHashMap<RepoId, Arc<dyn GitRepository>> = FxHashMap::default();
     let id_alloc = AtomicU64::new(1);
@@ -1328,10 +1368,7 @@ fn reload_repo_clears_stale_navigation_history() {
 }
 
 #[test]
-fn reload_repo_clears_a_stale_comparison_mark() {
-    // A reload can follow a reset or a dropped branch that took the marked
-    // commit with it. Keeping the mark would leave the context menus offering a
-    // "Compare with …" whose only possible outcome is a backend error.
+fn reload_repo_preserves_the_selected_commit_and_ab_review_when_the_commit_survives() {
     let mut repos: FxHashMap<RepoId, Arc<dyn GitRepository>> = FxHashMap::default();
     let id_alloc = AtomicU64::new(1);
     let mut state = AppState::default();
@@ -1344,10 +1381,30 @@ fn reload_repo_clears_a_stale_comparison_mark() {
     ));
     state.repos[0].set_open(Loadable::Ready(()));
     state.active_repo = Some(repo_id);
-    state.repos[0].comparison_mark = Some(crate::model::ComparisonMark {
-        commit_id: CommitId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
-        label: "feature".into(),
-    });
+    let selected = CommitId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into());
+    let tip = CommitId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+    let a = crate::model::ComparisonMark::commit(selected.clone(), "feature");
+    let b = crate::model::ComparisonMark::commit(tip.clone(), "main");
+    state.repos[0].set_selected_commit(Some(selected.clone()));
+    state.repos[0].comparison_mark = Some(a.clone());
+    state.repos[0].comparison_shelf.a = Some(a.clone());
+    state.repos[0].comparison_shelf.b = Some(b.clone());
+    state.repos[0]
+        .comparison_shelf
+        .named
+        .push(crate::model::NamedComparison {
+            name: "agent review".to_string(),
+            a: a.clone(),
+            b: b.clone(),
+        });
+    state.repos[0].comparison_shelf.selected_name = Some("agent review".to_string());
+    let range = crate::model::RangeSelection {
+        from: selected.clone(),
+        to: Some(tip.clone()),
+        from_label: "feature".to_string(),
+        to_label: "main".to_string(),
+    };
+    state.repos[0].set_range_selection(Some(range.clone()));
 
     reduce(
         &mut repos,
@@ -1356,9 +1413,56 @@ fn reload_repo_clears_a_stale_comparison_mark() {
         Msg::ReloadRepo { repo_id },
     );
 
-    assert!(
-        state.repos[0].comparison_mark.is_none(),
-        "a mark that a reload may have invalidated must not survive it"
+    assert_eq!(
+        state.repos[0].history_state.selected_commit.as_ref(),
+        Some(&selected)
+    );
+    assert_eq!(state.repos[0].comparison_mark.as_ref(), Some(&a));
+    assert_eq!(state.repos[0].comparison_shelf.a.as_ref(), Some(&a));
+    assert_eq!(state.repos[0].comparison_shelf.b.as_ref(), Some(&b));
+    assert_eq!(
+        state.repos[0].comparison_shelf.selected_name.as_deref(),
+        Some("agent review")
+    );
+    assert_eq!(
+        state.repos[0].history_state.range_selection.as_ref(),
+        Some(&range)
+    );
+
+    let scope = state.repos[0].history_state.history_scope;
+    let seq = active_log_seq(&state.repos[0]);
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::LogLoaded {
+            repo_id,
+            seq,
+            scope,
+            cursor: None,
+            result: Ok(LogPage {
+                commits: vec![Commit {
+                    id: selected.clone(),
+                    parent_ids: gitcomet_core::domain::CommitParentIds::new(),
+                    summary: "selected".into(),
+                    author: "Agent".into(),
+                    time: SystemTime::UNIX_EPOCH,
+                }],
+                next_cursor: None,
+            }),
+        }),
+    );
+
+    assert_eq!(
+        state.repos[0].history_state.selected_commit.as_ref(),
+        Some(&selected),
+        "the refreshed page still contains the selected commit"
+    );
+    assert_eq!(state.repos[0].comparison_shelf.a.as_ref(), Some(&a));
+    assert_eq!(state.repos[0].comparison_shelf.b.as_ref(), Some(&b));
+    assert_eq!(
+        state.repos[0].comparison_shelf.selected_name.as_deref(),
+        Some("agent review")
     );
 }
 
@@ -1499,6 +1603,54 @@ fn set_history_scope_emits_load_log_effect_for_every_history_mode() {
 }
 
 #[test]
+fn set_history_order_restarts_and_persists_the_selected_walk() {
+    let mut repos: FxHashMap<RepoId, Arc<dyn GitRepository>> = FxHashMap::default();
+    let id_alloc = AtomicU64::new(1);
+    let mut state = AppState::default();
+    state.repos.push(RepoState::new_opening(
+        RepoId(1),
+        RepoSpec {
+            workdir: PathBuf::from("/tmp/repo"),
+        },
+    ));
+    state.repos[0].set_log(Loadable::Ready(Arc::new(LogPage {
+        commits: Vec::new(),
+        next_cursor: None,
+    })));
+
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SetHistoryOrder {
+            repo_id: RepoId(1),
+            order: gitcomet_core::domain::HistoryOrder::Ancestor,
+        },
+    );
+
+    assert_eq!(
+        state.repos[0].history_state.history_order,
+        gitcomet_core::domain::HistoryOrder::Ancestor
+    );
+    assert!(state.repos[0].log.is_loading());
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::LoadLog {
+            order: gitcomet_core::domain::HistoryOrder::Ancestor,
+            cursor: None,
+            ..
+        }
+    )));
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::PersistRepoHistoryOrder {
+            order: gitcomet_core::domain::HistoryOrder::Ancestor,
+            ..
+        }
+    )));
+}
+
+#[test]
 fn set_history_scope_retains_ready_log_while_loading() {
     let mut repos: FxHashMap<RepoId, Arc<dyn GitRepository>> = FxHashMap::default();
     let id_alloc = AtomicU64::new(1);
@@ -1574,6 +1726,7 @@ fn stale_log_loaded_result_replays_latest_pending_scope_switch() {
         .loads_in_flight
         .request_log(crate::model::PendingLogLoad {
             scope: LogScope::FullReachable,
+            order: gitcomet_core::domain::HistoryOrder::Date,
             author: None,
             limit: 200,
             cursor: None,
@@ -2913,6 +3066,7 @@ fn superseded_log_chunks_are_ignored() {
         .loads_in_flight
         .request_log(crate::model::PendingLogLoad {
             scope,
+            order: gitcomet_core::domain::HistoryOrder::Date,
             author: Some("bob".to_string()),
             limit: 200,
             cursor: None,

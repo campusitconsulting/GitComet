@@ -1036,6 +1036,12 @@ impl MainPaneView {
                 }
             }
             repo.diff_state.diff_state_rev.hash(&mut hasher);
+            if matches!(
+                repo.diff_state.diff_target,
+                Some(DiffTarget::CommitRange { .. })
+            ) {
+                repo.local_review.rev.hash(&mut hasher);
+            }
             // The historical-browse tint keys off content-preview mode, which can
             // share a diff_target with a plain diff of the same commit+path.
             repo.diff_state.content_preview.hash(&mut hasher);
@@ -6585,6 +6591,31 @@ mod tests {
             .full_messages = Loadable::Ready(());
         let ready = MainPaneView::notify_fingerprint_for(&state);
         assert_ne!(ready, loading);
+    }
+
+    #[test]
+    fn notify_fingerprint_tracks_local_review_markers_for_commit_ranges() {
+        use gitcomet_core::domain::{CommitId, RepoSpec};
+        use gitcomet_state::model::RepoState;
+
+        let mut state = AppState::default();
+        state.active_repo = Some(RepoId(1));
+        let mut repo = RepoState::new_opening(
+            RepoId(1),
+            RepoSpec {
+                workdir: "/tmp/local-review-fingerprint".into(),
+            },
+        );
+        repo.diff_state.diff_target = Some(DiffTarget::CommitRange {
+            from_commit_id: CommitId("aaa".into()),
+            to_commit_id: Some(CommitId("bbb".into())),
+            path: None,
+        });
+        state.repos.push(repo);
+
+        let before = MainPaneView::notify_fingerprint_for(&state);
+        state.repos[0].local_review.rev = 1;
+        assert_ne!(before, MainPaneView::notify_fingerprint_for(&state));
     }
 
     #[test]

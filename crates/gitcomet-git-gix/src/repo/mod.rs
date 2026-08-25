@@ -144,6 +144,7 @@ struct TreeIndexCacheEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LogHeadPageCacheKey {
     mode: HistoryMode,
+    order: gitcomet_core::domain::HistoryOrder,
     head_oid: Option<gix::ObjectId>,
     limit: usize,
     last_seen: Option<CommitId>,
@@ -176,7 +177,26 @@ struct LogFileFollowCacheEntry {
 /// so it can borrow nothing.
 type LogPagedWalkFilter = Box<dyn FnMut(&gix::oid) -> bool + Send>;
 
-type LogPagedWalk = gix::traverse::commit::Simple<gix::OdbHandleArc, LogPagedWalkFilter>;
+type LogSimplePagedWalk = gix::traverse::commit::Simple<gix::OdbHandleArc, LogPagedWalkFilter>;
+type LogTopoPagedWalk = gix::traverse::commit::Topo<gix::OdbHandleArc, LogPagedWalkFilter>;
+
+enum LogPagedWalk {
+    Date(LogSimplePagedWalk),
+    Ancestor(LogTopoPagedWalk),
+}
+
+impl LogPagedWalk {
+    fn next(&mut self) -> Option<std::result::Result<gix::traverse::commit::Info, String>> {
+        match self {
+            Self::Date(walk) => walk
+                .next()
+                .map(|result| result.map_err(|error| error.to_string())),
+            Self::Ancestor(walk) => walk
+                .next()
+                .map(|result| result.map_err(|error| error.to_string())),
+        }
+    }
+}
 
 struct LogPagedWalkState {
     /// Commits pulled from the walk but not yet placed on a page. Decoding runs
@@ -191,6 +211,7 @@ struct LogPagedWalkState {
 struct LogPagedWalkCacheEntry {
     token: Arc<str>,
     mode: HistoryMode,
+    order: gitcomet_core::domain::HistoryOrder,
     /// The commits the walk was seeded from — one head for most modes, every
     /// ref for `AllBranches`. A walk started from different tips covers a
     /// different history, so a token minted for one must not resume the other.
@@ -282,6 +303,26 @@ impl GitRepository for GixRepo {
         self.log_history_mode_page_cancellable_impl(mode, limit, cursor, cancellation)
     }
 
+    fn log_history_mode_ordered_page(
+        &self,
+        mode: HistoryMode,
+        order: gitcomet_core::domain::HistoryOrder,
+        limit: usize,
+        cursor: Option<&LogCursor>,
+    ) -> Result<LogPage> {
+        let _scope = git_ops_trace::scope(GitOpTraceKind::LogWalk);
+        let cancellation = CancellationToken::new();
+        self.log_history_mode_ordered_page_streaming_impl(
+            mode,
+            order,
+            None,
+            limit,
+            cursor,
+            &cancellation,
+            &mut |_| {},
+        )
+    }
+
     fn log_history_mode_page_streaming(
         &self,
         mode: HistoryMode,
@@ -294,6 +335,28 @@ impl GitRepository for GixRepo {
         let _scope = git_ops_trace::scope(GitOpTraceKind::LogWalk);
         self.log_history_mode_page_streaming_impl(
             mode,
+            author,
+            limit,
+            cursor,
+            cancellation,
+            on_chunk,
+        )
+    }
+
+    fn log_history_mode_ordered_page_streaming(
+        &self,
+        mode: HistoryMode,
+        order: gitcomet_core::domain::HistoryOrder,
+        author: Option<&str>,
+        limit: usize,
+        cursor: Option<&LogCursor>,
+        cancellation: &CancellationToken,
+        on_chunk: &mut dyn FnMut(gitcomet_core::services::LogChunk),
+    ) -> Result<LogPage> {
+        let _scope = git_ops_trace::scope(GitOpTraceKind::LogWalk);
+        self.log_history_mode_ordered_page_streaming_impl(
+            mode,
+            order,
             author,
             limit,
             cursor,
@@ -352,6 +415,10 @@ impl GitRepository for GixRepo {
         to: Option<&CommitId>,
     ) -> Result<Vec<CommitFileChange>> {
         self.diff_range_files_impl(from, to)
+    }
+
+    fn snapshot_worktree(&self, worktree: &Path) -> Result<CommitId> {
+        self.snapshot_worktree_impl(worktree)
     }
 
     fn commit_messages(&self, ids: &[CommitId]) -> Result<Vec<String>> {

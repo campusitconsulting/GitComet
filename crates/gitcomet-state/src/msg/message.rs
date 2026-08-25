@@ -206,6 +206,10 @@ pub enum Msg {
         repo_id: RepoId,
         scope: LogScope,
     },
+    SetHistoryOrder {
+        repo_id: RepoId,
+        order: gitcomet_core::domain::HistoryOrder,
+    },
     /// Restricts the history to commits authored by `author` (case-insensitive
     /// match on the author name). `None` clears the filter.
     SetHistoryAuthorFilter {
@@ -245,6 +249,13 @@ pub enum Msg {
         from_label: String,
         to_label: String,
     },
+    /// Compare arbitrary shelf endpoints. Live worktrees are captured into
+    /// immutable tree objects by the backend before the range opens.
+    CompareComparisonEndpoints {
+        repo_id: RepoId,
+        a: ComparisonMark,
+        b: ComparisonMark,
+    },
     /// Compare a commit/branch/tag (resolved to `from`) against the live working
     /// tree. Loads the changed-file list; the tip tracks uncommitted changes.
     CompareWithWorkingTree {
@@ -273,7 +284,7 @@ pub enum Msg {
     ClearComparisonMark {
         repo_id: RepoId,
     },
-    /// Put an already-resolved commit/ref endpoint into shelf slot A or B.
+    /// Put a resolved commit/ref or live linked-worktree endpoint into A or B.
     SetComparisonSlot {
         repo_id: RepoId,
         slot: ComparisonSlot,
@@ -286,8 +297,8 @@ pub enum Msg {
     SwapComparisonSlots {
         repo_id: RepoId,
     },
-    /// Add or replace a named pair. Commit-ish resolution happens before this
-    /// message reaches the reducer, just like `CompareCommitRange`.
+    /// Add or replace a named pair. Only immutable commit/ref pairs are durable;
+    /// the UI keeps live-worktree pairs session-only.
     AddNamedComparison {
         repo_id: RepoId,
         name: String,
@@ -311,6 +322,21 @@ pub enum Msg {
         workdir: PathBuf,
         session: crate::local_review::LocalReviewSession,
         comment: crate::local_review::ReviewComment,
+    },
+    /// Explicitly refresh the cached A/B review session. This is also emitted
+    /// after UI writes so markers never wait for a repository refresh.
+    ReloadLocalReviewSession {
+        repo_id: RepoId,
+        workdir: PathBuf,
+        session_id: String,
+    },
+    SetLocalReviewCommentStatus {
+        repo_id: RepoId,
+        workdir: PathBuf,
+        session_id: String,
+        comment_id: String,
+        status: crate::local_review::ReviewStatus,
+        updated_at_unix_ms: i64,
     },
     SelectDiff {
         repo_id: RepoId,
@@ -1026,6 +1052,25 @@ pub enum InternalMsg {
         comment_id: String,
         result: Result<(PathBuf, u64), String>,
     },
+    LocalReviewSessionLoaded {
+        repo_id: RepoId,
+        session_id: String,
+        result: Result<
+            (
+                PathBuf,
+                u64,
+                Option<crate::local_review::LocalReviewSession>,
+            ),
+            String,
+        >,
+    },
+    LocalReviewCommentStatusPersisted {
+        repo_id: RepoId,
+        session_id: String,
+        comment_id: String,
+        status: crate::local_review::ReviewStatus,
+        result: Result<(PathBuf, u64), String>,
+    },
     CloneRepoProgress {
         dest: Arc<PathBuf>,
         line: String,
@@ -1145,6 +1190,13 @@ pub enum InternalMsg {
         repo_id: RepoId,
         commit_id: CommitId,
         result: Result<String, Error>,
+    },
+    ComparisonEndpointsSnapshotted {
+        repo_id: RepoId,
+        request: u64,
+        a: ComparisonMark,
+        b: ComparisonMark,
+        result: Result<(CommitId, CommitId), Error>,
     },
     FileHistoryLoaded {
         repo_id: RepoId,

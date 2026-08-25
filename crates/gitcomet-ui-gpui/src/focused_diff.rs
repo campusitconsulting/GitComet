@@ -71,6 +71,7 @@ struct FocusedDiffView {
     theme: AppTheme,
     ui_font_family: String,
     editor_font_family: String,
+    editor_font_size_px: u16,
     use_font_ligatures: bool,
     ui_scale_percent: u32,
 }
@@ -151,6 +152,7 @@ impl FocusedDiffView {
         let ui_scale = crate::ui_scale::current_or_initialize_from_session(&ui_session, cx);
         let font_preferences =
             crate::font_preferences::current_or_initialize_from_session(window, &ui_session, cx);
+        crate::ui_scale::apply_to_window(window, ui_scale.percent);
 
         Self {
             lines,
@@ -166,6 +168,7 @@ impl FocusedDiffView {
             editor_font_family: crate::font_preferences::applied_editor_font_family(
                 &font_preferences.editor_font_family,
             ),
+            editor_font_size_px: font_preferences.editor_font_size_px,
             use_font_ligatures: font_preferences.use_font_ligatures,
             ui_scale_percent: ui_scale.percent,
         }
@@ -351,7 +354,9 @@ impl Render for FocusedDiffView {
                 weight: FontWeight::default(),
                 style: gpui::FontStyle::default(),
             })
-            .text_size(scaled_px(13.0))
+            .text_size(gpui::px(
+                crate::font_preferences::current_ui_font_size_px() as f32
+            ))
             .flex()
             .flex_col()
             // Toolbar
@@ -408,6 +413,7 @@ impl Render for FocusedDiffView {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
                     .font_family(self.editor_font_family.clone())
+                    .text_size(gpui::px(self.editor_font_size_px as f32))
                     .px(scaled_px(16.0))
                     .py(scaled_px(4.0))
                     .children(

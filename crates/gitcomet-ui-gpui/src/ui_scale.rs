@@ -1,12 +1,13 @@
 use gitcomet_state::session;
 use gpui::{BorrowAppContext, Pixels, Size, Window, px, size};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) const DEFAULT_UI_SCALE_PERCENT: u32 = 100;
 pub(crate) const UI_SCALE_PRESETS: &[u32] = &[80, 90, 100, 110, 125, 150, 175, 200];
 
-const BASE_REM_PX: f32 = 16.0;
 const MIN_UI_SCALE_PERCENT: u32 = 80;
 const MAX_UI_SCALE_PERCENT: u32 = 200;
+static CURRENT_UI_SCALE_PERCENT: AtomicU32 = AtomicU32::new(DEFAULT_UI_SCALE_PERCENT);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AppUiScale {
@@ -49,6 +50,7 @@ where
         initialized: true,
     };
     cx.set_global(next);
+    CURRENT_UI_SCALE_PERCENT.store(next.percent, Ordering::Relaxed);
     next
 }
 
@@ -61,6 +63,7 @@ where
         initialized: true,
     };
     cx.set_global(next);
+    CURRENT_UI_SCALE_PERCENT.store(next.percent, Ordering::Relaxed);
     next
 }
 
@@ -169,7 +172,8 @@ pub(crate) fn stored_design_units(value: Option<f32>) -> Option<u32> {
 }
 
 pub(crate) fn rem_size_for_percent(percent: u32) -> Pixels {
-    px(BASE_REM_PX * design_scale_factor_from_percent(percent))
+    let _ = percent;
+    px(crate::font_preferences::current_ui_font_size_px() as f32)
 }
 
 pub(crate) fn apply_to_window(window: &mut Window, percent: u32) {
@@ -180,9 +184,8 @@ pub(crate) fn design_scale_factor_from_percent(percent: u32) -> f32 {
     sanitize_percent(Some(percent)) as f32 / DEFAULT_UI_SCALE_PERCENT as f32
 }
 
-pub(crate) fn design_scale_factor_from_window(window: &Window) -> f32 {
-    let rem_size: f32 = window.rem_size().into();
-    rem_size / BASE_REM_PX
+pub(crate) fn design_scale_factor_from_window(_window: &Window) -> f32 {
+    design_scale_factor_from_percent(CURRENT_UI_SCALE_PERCENT.load(Ordering::Relaxed))
 }
 
 pub(crate) fn design_px<C>(value: f32, cx: &mut C) -> Pixels

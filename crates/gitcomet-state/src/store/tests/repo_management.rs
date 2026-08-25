@@ -475,14 +475,8 @@ fn open_repo_restores_saved_named_comparisons_and_selected_pair() {
     std::fs::create_dir_all(&repo_path).expect("create repo path");
     let normalized_repo_path = super::reducer::normalize_repo_path(repo_path.clone());
 
-    let a = ComparisonMark {
-        commit_id: CommitId(Arc::from("1111111")),
-        label: "main".to_string(),
-    };
-    let b = ComparisonMark {
-        commit_id: CommitId(Arc::from("2222222")),
-        label: "feature".to_string(),
-    };
+    let a = ComparisonMark::commit(CommitId(Arc::from("1111111")), "main");
+    let b = ComparisonMark::commit(CommitId(Arc::from("2222222")), "feature");
     let mut persisted_state = AppState::default();
     let mut persisted_repo = RepoState::new_opening(
         RepoId(99),
@@ -2363,6 +2357,7 @@ fn closing_active_repo_refreshes_open_neighbor_with_cancelled_loads() {
         );
         let log_request = crate::model::PendingLogLoad {
             scope: repo1_state.history_state.history_scope,
+            order: gitcomet_core::domain::HistoryOrder::Date,
             author: None,
             limit: 50,
             cursor: None,

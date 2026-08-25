@@ -37,6 +37,19 @@ pub enum Effect {
         session: crate::local_review::LocalReviewSession,
         comment: crate::local_review::ReviewComment,
     },
+    LoadLocalReviewSession {
+        repo_id: RepoId,
+        workdir: PathBuf,
+        session_id: String,
+    },
+    SetLocalReviewCommentStatus {
+        repo_id: RepoId,
+        workdir: PathBuf,
+        session_id: String,
+        comment_id: String,
+        status: crate::local_review::ReviewStatus,
+        updated_at_unix_ms: i64,
+    },
     PersistRepoHistoryAuthorFilter {
         repo_id: Option<RepoId>,
         workdir: PathBuf,
@@ -81,10 +94,17 @@ pub enum Effect {
         /// walk a newer request superseded. See [`crate::model::LogLoadSeq`].
         seq: crate::model::LogLoadSeq,
         scope: LogScope,
+        order: gitcomet_core::domain::HistoryOrder,
         /// Case-insensitive author filter, or `None` for all authors.
         author: Option<String>,
         limit: usize,
         cursor: Option<LogCursor>,
+    },
+    PersistRepoHistoryOrder {
+        repo_id: Option<RepoId>,
+        workdir: std::path::PathBuf,
+        order: gitcomet_core::domain::HistoryOrder,
+        action: &'static str,
     },
     LoadTags {
         repo_id: RepoId,
@@ -167,6 +187,12 @@ pub enum Effect {
         /// Echoed back on the reply so a completion that lost a race against a
         /// newer load can be dropped. See `HistoryState::range_files_request`.
         request: u64,
+    },
+    SnapshotComparisonEndpoints {
+        repo_id: RepoId,
+        request: u64,
+        a: crate::model::ComparisonMark,
+        b: crate::model::ComparisonMark,
     },
     LoadSquashMessagePreview {
         repo_id: RepoId,

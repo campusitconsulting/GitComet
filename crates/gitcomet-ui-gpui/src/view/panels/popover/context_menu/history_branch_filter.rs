@@ -1,19 +1,20 @@
 use super::*;
 
 pub(super) fn model(host: &PopoverHost, repo_id: RepoId) -> ContextMenuModel {
-    let current_scope = host
-        .state
-        .repos
-        .iter()
-        .find(|repo| repo.id == repo_id)
+    let repo = host.state.repos.iter().find(|repo| repo.id == repo_id);
+    let current_scope = repo
         .map(|repo| repo.history_state.history_scope)
         .unwrap_or_default();
-    model_for_scope(repo_id, current_scope)
+    let current_order = repo
+        .map(|repo| repo.history_state.history_order)
+        .unwrap_or_default();
+    model_for_scope_and_order(repo_id, current_scope, current_order)
 }
 
-fn model_for_scope(
+fn model_for_scope_and_order(
     repo_id: RepoId,
     current_scope: gitcomet_core::domain::LogScope,
+    current_order: gitcomet_core::domain::HistoryOrder,
 ) -> ContextMenuModel {
     let mut items = vec![
         ContextMenuItem::Header("History mode".into()),
@@ -33,6 +34,31 @@ fn model_for_scope(
                 }),
             }),
     );
+    items.extend([
+        ContextMenuItem::Separator,
+        ContextMenuItem::Header("Commit order".into()),
+        ContextMenuItem::Separator,
+    ]);
+    for (order, label, shortcut) in [
+        (
+            gitcomet_core::domain::HistoryOrder::Date,
+            "Date Order (Fast)",
+            "Default; lightweight commit-time paging",
+        ),
+        (
+            gitcomet_core::domain::HistoryOrder::Ancestor,
+            "Ancestor Order (Topo)",
+            "Topology-aware; shallow repositories use Date",
+        ),
+    ] {
+        items.push(ContextMenuItem::Entry {
+            label: label.into(),
+            icon: (order == current_order).then_some("icons/check.svg".into()),
+            shortcut: Some(shortcut.into()),
+            disabled: false,
+            action: Box::new(ContextMenuAction::SetHistoryOrder { repo_id, order }),
+        });
+    }
     ContextMenuModel::new(items)
 }
 
@@ -42,7 +68,11 @@ mod tests {
 
     #[test]
     fn model_marks_current_history_mode() {
-        let model = super::model_for_scope(RepoId(11), gitcomet_core::domain::LogScope::MergesOnly);
+        let model = super::model_for_scope_and_order(
+            RepoId(11),
+            gitcomet_core::domain::LogScope::MergesOnly,
+            gitcomet_core::domain::HistoryOrder::Ancestor,
+        );
 
         assert!(model.items.iter().any(|item| {
             matches!(
@@ -54,5 +84,10 @@ mod tests {
                             .is_some_and(|icon| icon.as_ref() == "icons/check.svg")
             )
         }));
+        assert!(model.items.iter().any(|item| matches!(
+            item,
+            ContextMenuItem::Entry { label, icon, .. }
+                if label.as_ref() == "Ancestor Order (Topo)" && icon.is_some()
+        )));
     }
 }

@@ -25,6 +25,30 @@ impl std::fmt::Debug for InternalMsg {
                 .field("comment_id", comment_id)
                 .field("ok", &result.is_ok())
                 .finish(),
+            InternalMsg::LocalReviewSessionLoaded {
+                repo_id,
+                session_id,
+                result,
+            } => f
+                .debug_struct("LocalReviewSessionLoaded")
+                .field("repo_id", repo_id)
+                .field("session_id", session_id)
+                .field("ok", &result.is_ok())
+                .finish(),
+            InternalMsg::LocalReviewCommentStatusPersisted {
+                repo_id,
+                session_id,
+                comment_id,
+                status,
+                result,
+            } => f
+                .debug_struct("LocalReviewCommentStatusPersisted")
+                .field("repo_id", repo_id)
+                .field("session_id", session_id)
+                .field("comment_id", comment_id)
+                .field("status", status)
+                .field("ok", &result.is_ok())
+                .finish(),
             InternalMsg::CloneRepoProgress { dest, line } => f
                 .debug_struct("CloneRepoProgress")
                 .field("dest", dest)
@@ -196,6 +220,20 @@ impl std::fmt::Debug for InternalMsg {
                 .debug_struct("HoverCommitMessageLoaded")
                 .field("repo_id", repo_id)
                 .field("commit_id", commit_id)
+                .field("result", result)
+                .finish(),
+            InternalMsg::ComparisonEndpointsSnapshotted {
+                repo_id,
+                request,
+                a,
+                b,
+                result,
+            } => f
+                .debug_struct("ComparisonEndpointsSnapshotted")
+                .field("repo_id", repo_id)
+                .field("request", request)
+                .field("a", a)
+                .field("b", b)
                 .field("result", result)
                 .finish(),
             InternalMsg::FileHistoryLoaded {

@@ -24,8 +24,6 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-const DIFF_FONT_SCALE: f32 = 0.80;
-
 const GUTTER_TEXT_LAYOUT_CACHE_MAX_ENTRIES: usize = 16_384;
 const STREAMED_DIFF_TEXT_MIN_BYTES: usize = LARGE_DIFF_TEXT_MIN_BYTES;
 const STREAMED_DIFF_TEXT_OVERSCAN_COLUMNS: usize = 64;
@@ -3338,7 +3336,7 @@ fn line_metrics(window: &Window) -> LineMetrics {
 /// regular row text; the annotation "when" column uses a slightly smaller scale).
 fn line_metrics_scaled(window: &Window, extra_scale: f32) -> LineMetrics {
     let style = diff_text_style(window);
-    let font_size = style.font_size.to_pixels(window.rem_size()) * DIFF_FONT_SCALE * extra_scale;
+    let font_size = px(crate::font_preferences::current_editor_font_size_px() as f32) * extra_scale;
     let line_height = style
         .line_height
         .to_pixels(font_size.into(), window.rem_size());
@@ -3369,7 +3367,7 @@ pub(in crate::view) fn diff_text_wrap_char_width(
 ) -> Pixels {
     let mut style = diff_text_style(window);
     style.font_family = editor_font_family.into();
-    let font_size = style.font_size.to_pixels(window.rem_size()) * DIFF_FONT_SCALE;
+    let font_size = px(crate::font_preferences::current_editor_font_size_px() as f32);
     let run = style.to_run(DIFF_TEXT_WRAP_WIDTH_SAMPLE.len());
     let layout = window.text_system().shape_line(
         DIFF_TEXT_WRAP_WIDTH_SAMPLE.into(),

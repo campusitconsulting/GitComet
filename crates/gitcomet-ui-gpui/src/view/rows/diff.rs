@@ -1189,6 +1189,7 @@ impl MainPaneView {
                                 annot_hover,
                                 stage_area,
                                 stage_hover,
+                                0,
                                 cx,
                             )
                         }
@@ -1509,6 +1510,7 @@ impl MainPaneView {
                         annot_hover,
                         stage_area,
                         stage_hover,
+                        0,
                         cx,
                     )
                 })
@@ -1519,6 +1521,10 @@ impl MainPaneView {
         let cache_epoch = 0u64;
         let repo_id_for_context_menu = this.active_repo_id();
         let active_context_menu_invoker = this.active_context_menu_invoker.clone();
+        let local_review_session = this
+            .active_repo()
+            .and_then(crate::view::local_review_ui::loaded_session)
+            .cloned();
         let syntax_mode = this.patch_diff_syntax_mode();
         let blame_prev_nl = std::cell::Cell::new(BlamePrev::default());
         range
@@ -1620,6 +1626,20 @@ impl MainPaneView {
                             format!("diff_hunk_menu_{}_{}", repo_id.0, src_ix).into();
                         active_context_menu_invoker.as_ref() == Some(&invoker)
                     });
+                let local_review_count = this
+                    .diff_file_for_src_ix
+                    .get(src_ix)
+                    .and_then(|path| path.as_deref())
+                    .map(std::path::Path::new)
+                    .map(|path| {
+                        crate::view::local_review_ui::comment_count_for_diff_line(
+                            local_review_session.as_ref(),
+                            path,
+                            &line,
+                            DiffTextRegion::Inline,
+                        )
+                    })
+                    .unwrap_or(0);
                 let styled = if should_style && streamed_spec.is_none() {
                     this.diff_text_segments_cache_get_for_query(
                         src_ix,
@@ -1668,6 +1688,7 @@ impl MainPaneView {
                     annot_hover,
                     stage_area,
                     stage_hover,
+                    local_review_count,
                     cx,
                 )
             })
@@ -1942,6 +1963,7 @@ impl MainPaneView {
                                 annot_hover,
                                 stage_area,
                                 stage_hover,
+                                0,
                                 cx,
                             )
                         }
@@ -2082,6 +2104,7 @@ impl MainPaneView {
                     annot_hover,
                     stage_area,
                     stage_hover,
+                    0,
                     cx,
                 )
                 })
@@ -2091,6 +2114,10 @@ impl MainPaneView {
         let theme = this.theme;
         let cache_epoch = 0u64;
         let syntax_mode = this.patch_diff_syntax_mode();
+        let local_review_session = this
+            .active_repo()
+            .and_then(crate::view::local_review_ui::loaded_session)
+            .cloned();
         let blame_prev_nl = std::cell::Cell::new(BlamePrev::default());
         range
             .map(|visible_ix| {
@@ -2114,6 +2141,26 @@ impl MainPaneView {
                         new_src_ix,
                     } => {
                         let src_ix = if is_left { old_src_ix } else { new_src_ix };
+                        let local_review_count = src_ix
+                            .and_then(|src_ix| {
+                                this.diff_file_for_src_ix
+                                    .get(src_ix)
+                                    .and_then(|path| path.as_deref())
+                            })
+                            .map(std::path::Path::new)
+                            .map(|path| {
+                                crate::view::local_review_ui::comment_count_for_anchor(
+                                    local_review_session.as_ref(),
+                                    path,
+                                    if is_left {
+                                        gitcomet_state::local_review::ReviewSide::Old
+                                    } else {
+                                        gitcomet_state::local_review::ReviewSide::New
+                                    },
+                                    if is_left { row.old_line } else { row.new_line },
+                                )
+                            })
+                            .unwrap_or(0);
                         let old_changed = old_src_ix.is_some_and(|src_ix| {
                             matches!(this.patch_visual_line_kind(src_ix), DiffLineKind::Remove)
                         });
@@ -2229,6 +2276,7 @@ impl MainPaneView {
                             annot_hover,
                             stage_area,
                             stage_hover,
+                            local_review_count,
                             cx,
                         )
                     }
@@ -2336,6 +2384,7 @@ fn diff_row(
     annot_hover: Option<(usize, AnnotArea)>,
     stage_area: Option<DiffArea>,
     stage_hover: Option<diff_canvas::DiffStageHover>,
+    local_review_count: usize,
     cx: &mut gpui::Context<MainPaneView>,
 ) -> AnyElement {
     let on_click = cx.listener(move |this, e: &ClickEvent, _w, cx| {
@@ -2472,7 +2521,7 @@ fn diff_row(
         SharedString::default()
     };
 
-    match mode {
+    let row = match mode {
         DiffViewMode::Inline => {
             // `visual_kind`, not `line.kind`: in ignore-whitespace mode a
             // whitespace-only change renders as context, and a row painted as
@@ -2588,7 +2637,44 @@ fn diff_row(
                 stage_hover,
             )
         }
+    };
+    local_review_marker(row, local_review_count, theme, min_width, visible_ix)
+}
+
+fn local_review_marker(
+    row: AnyElement,
+    count: usize,
+    theme: AppTheme,
+    min_width: Pixels,
+    visible_ix: usize,
+) -> AnyElement {
+    if count == 0 {
+        return row;
     }
+    div()
+        .id(("local_review_marker_row", visible_ix))
+        .relative()
+        .w_full()
+        .min_w(min_width)
+        .child(row)
+        .child(
+            div()
+                .absolute()
+                .top(px(2.0))
+                .right(px(8.0))
+                .h(px(16.0))
+                .min_w(px(20.0))
+                .px_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(with_alpha(theme.colors.accent.foreground, 0.18))
+                .text_xs()
+                .text_color(theme.colors.accent.foreground)
+                .child(format!("💬 {count}")),
+        )
+        .into_any_element()
 }
 
 /// Build the stage-gutter spec for a change line, or `None` for anything that
@@ -2896,6 +2982,7 @@ fn patch_split_column_row(
     annot_hover: Option<(usize, AnnotArea)>,
     stage_area: Option<DiffArea>,
     stage_hover: Option<diff_canvas::DiffStageHover>,
+    local_review_count: usize,
     cx: &mut gpui::Context<MainPaneView>,
 ) -> AnyElement {
     let line_kind = match (column, visual_kind) {
@@ -2935,7 +3022,7 @@ fn patch_split_column_row(
         )
     });
 
-    diff_canvas::patch_split_column_row_canvas(
+    let rendered = diff_canvas::patch_split_column_row_canvas(
         theme,
         cx.entity(),
         ui_scale_percent,
@@ -2962,7 +3049,8 @@ fn patch_split_column_row(
         annot_hover,
         stage,
         stage_hover,
-    )
+    );
+    local_review_marker(rendered, local_review_count, theme, min_width, visible_ix)
 }
 
 #[allow(clippy::too_many_arguments)]

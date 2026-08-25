@@ -99,6 +99,7 @@ pub type LogLoadSeq = u64;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingLogLoad {
     pub scope: LogScope,
+    pub order: gitcomet_core::domain::HistoryOrder,
     pub author: Option<String>,
     pub limit: usize,
     pub cursor: Option<LogCursor>,
@@ -197,11 +198,11 @@ impl RepoLoadsInFlight {
     }
 
     /// For log loads: coalesce by keeping only the latest requested
-    /// `(scope, author, cursor)` while a log load is already in flight. Returns
+    /// `(scope, order, author, cursor)` while a log load is already in flight. Returns
     /// the new walk's sequence number when it starts now, `None` when it was
     /// queued behind the walk in flight.
     ///
-    /// A request that changes the scope or the author filter is dispatched
+    /// A request that changes the scope, order, or author filter is dispatched
     /// straight away instead of being queued: on a large repository a walk runs
     /// for tens of seconds, and the repo-load pool has one or two threads, so
     /// waiting the old one out would stall the new filter for that whole time.
@@ -213,10 +214,9 @@ impl RepoLoadsInFlight {
             return Some(self.start_log(next));
         }
 
-        let supersedes_active = self
-            .active_log
-            .as_ref()
-            .is_none_or(|(_, active)| active.scope != next.scope || active.author != next.author);
+        let supersedes_active = self.active_log.as_ref().is_none_or(|(_, active)| {
+            active.scope != next.scope || active.order != next.order || active.author != next.author
+        });
         if supersedes_active {
             self.pending_log = None;
             return Some(self.start_log(next));
@@ -224,7 +224,11 @@ impl RepoLoadsInFlight {
         match &self.pending_log {
             // Scope or author changes invalidate older pending requests
             // (including pagination).
-            Some(existing) if existing.scope != next.scope || existing.author != next.author => {
+            Some(existing)
+                if existing.scope != next.scope
+                    || existing.order != next.order
+                    || existing.author != next.author =>
+            {
                 self.pending_log = Some(next);
             }
             // Don't let a refresh request (cursor=None) clobber a pending pagination request
@@ -766,6 +770,7 @@ pub struct PendingCommitRetry {
 #[derive(Clone, Debug)]
 pub struct HistoryState {
     pub history_scope: LogScope,
+    pub history_order: gitcomet_core::domain::HistoryOrder,
     /// Case-insensitive author filter for the history, or `None` for all
     /// authors. Matches the author name shown in the UI.
     pub history_author_filter: Option<String>,
@@ -836,6 +841,7 @@ impl Default for HistoryState {
     fn default() -> Self {
         Self {
             history_scope: LogScope::default(),
+            history_order: gitcomet_core::domain::HistoryOrder::default(),
             history_author_filter: None,
             log: Loadable::NotLoaded,
             retained_log_while_loading: None,
@@ -1248,15 +1254,49 @@ pub struct RepoState {
     /// `comparison_mark` remains as a compatibility mirror of slot A while the
     /// existing context menus still read it directly.
     pub comparison_shelf: ComparisonShelf,
+    /// Cached provider-independent review threads for the visible A/B range.
+    /// Effects own all sidecar I/O; render paths only read this snapshot.
+    pub local_review: LocalReviewUiState,
 }
 
-/// A point marked for comparison via the "Mark for comparison" context-menu
-/// action. `commit_id` is the resolved commit (branch/tag tips resolve to their
-/// target); `label` is what the menu shows (short sha, branch, or tag name).
+/// A stable commit/tree or a request to snapshot a linked worktree's complete
+/// visible state (tracked, staged, unstaged, and non-ignored untracked files).
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ComparisonEndpoint {
+    Commit(CommitId),
+    WorktreeDirty { path: PathBuf },
+}
+
+/// A point marked for comparison. Commit/ref endpoints are immutable object
+/// ids. Worktree endpoints are live descriptors until the user opens the diff;
+/// both sides are then captured as immutable Git tree objects before diffing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ComparisonMark {
-    pub commit_id: CommitId,
+    pub endpoint: ComparisonEndpoint,
     pub label: String,
+}
+
+impl ComparisonMark {
+    pub fn commit(commit_id: CommitId, label: impl Into<String>) -> Self {
+        Self {
+            endpoint: ComparisonEndpoint::Commit(commit_id),
+            label: label.into(),
+        }
+    }
+
+    pub fn worktree_dirty(path: PathBuf, label: impl Into<String>) -> Self {
+        Self {
+            endpoint: ComparisonEndpoint::WorktreeDirty { path },
+            label: label.into(),
+        }
+    }
+
+    pub fn commit_id(&self) -> Option<&CommitId> {
+        match &self.endpoint {
+            ComparisonEndpoint::Commit(commit_id) => Some(commit_id),
+            ComparisonEndpoint::WorktreeDirty { .. } => None,
+        }
+    }
 }
 
 /// One of the two explicit endpoints in the comparison shelf.
@@ -1287,6 +1327,29 @@ pub struct ComparisonShelf {
     /// The named pair most recently selected. Manual edits to either slot
     /// clear this so the UI cannot imply that a saved pair was changed.
     pub selected_name: Option<String>,
+    /// Invalidates asynchronous worktree snapshots when the endpoints change.
+    pub snapshot_request: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalReviewUiState {
+    /// Deterministic `ab:<base>..<head>` identity currently displayed by the
+    /// commit-range diff. Replies for an older range are ignored.
+    pub session_id: Option<String>,
+    pub session: Loadable<Option<crate::local_review::LocalReviewSession>>,
+    pub store_revision: u64,
+    pub rev: u64,
+}
+
+impl Default for LocalReviewUiState {
+    fn default() -> Self {
+        Self {
+            session_id: None,
+            session: Loadable::NotLoaded,
+            store_revision: 0,
+            rev: 0,
+        }
+    }
 }
 
 impl RepoState {
@@ -1372,6 +1435,7 @@ impl RepoState {
             pending_force_push_lease: None,
             comparison_mark: None,
             comparison_shelf: ComparisonShelf::default(),
+            local_review: LocalReviewUiState::default(),
         }
     }
 
@@ -1848,6 +1912,14 @@ impl RepoState {
             return;
         }
         self.history_state.history_scope = scope;
+        self.bump_log_revs();
+    }
+
+    pub(crate) fn set_history_order(&mut self, order: gitcomet_core::domain::HistoryOrder) {
+        if self.history_state.history_order == order {
+            return;
+        }
+        self.history_state.history_order = order;
         self.bump_log_revs();
     }
 
@@ -2613,6 +2685,7 @@ mod tests {
     ) -> PendingLogLoad {
         PendingLogLoad {
             scope,
+            order: gitcomet_core::domain::HistoryOrder::Date,
             author: author.map(str::to_owned),
             limit: 20,
             cursor,
@@ -2754,6 +2827,23 @@ mod tests {
             .request_log(log_request(LogScope::MergesOnly, Some("alice"), None))
             .expect("an author change starts at once");
 
+        assert!(loads.is_active_log_reply(latest));
+        assert_eq!(loads.finish_log(), None);
+    }
+
+    #[test]
+    fn request_log_order_change_starts_immediately_and_invalidates_old_reply() {
+        let mut loads = RepoLoadsInFlight::default();
+        let first = loads
+            .request_log(log_request(LogScope::FullReachable, None, None))
+            .expect("date walk starts");
+        let mut ancestor = log_request(LogScope::FullReachable, None, None);
+        ancestor.order = gitcomet_core::domain::HistoryOrder::Ancestor;
+        let latest = loads
+            .request_log(ancestor)
+            .expect("order change starts a replacement walk");
+
+        assert!(!loads.is_active_log_reply(first));
         assert!(loads.is_active_log_reply(latest));
         assert_eq!(loads.finish_log(), None);
     }

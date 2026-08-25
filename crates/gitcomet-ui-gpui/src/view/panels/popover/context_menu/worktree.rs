@@ -47,10 +47,7 @@ pub(super) fn model(
                 head.as_ref().chars().take(8).collect::<String>()
             ),
         };
-        let endpoint = gitcomet_state::model::ComparisonMark {
-            commit_id: head.clone(),
-            label: endpoint_label,
-        };
+        let endpoint = gitcomet_state::model::ComparisonMark::commit(head.clone(), endpoint_label);
         items.push(ContextMenuItem::Separator);
         for (slot, slot_label) in [
             (gitcomet_state::model::ComparisonSlot::A, "A"),
@@ -68,6 +65,35 @@ pub(super) fn model(
                 }),
             });
         }
+    }
+    let worktree_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("worktree");
+    let dirty_label = format!(
+        "{} · {worktree_name} working state",
+        branch.unwrap_or("detached")
+    );
+    items.push(ContextMenuItem::Separator);
+    for (slot, slot_label) in [
+        (gitcomet_state::model::ComparisonSlot::A, "A"),
+        (gitcomet_state::model::ComparisonSlot::B, "B"),
+    ] {
+        items.push(ContextMenuItem::Entry {
+            label: format!("Set worktree working state as comparison {slot_label}").into(),
+            icon: Some("icons/folder.svg".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::SetComparisonSlot {
+                repo_id,
+                slot,
+                endpoint: gitcomet_state::model::ComparisonMark::worktree_dirty(
+                    path.to_path_buf(),
+                    dirty_label.clone(),
+                ),
+            }),
+        });
     }
     items.push(ContextMenuItem::Separator);
     items.push(ContextMenuItem::Entry {
@@ -170,19 +196,26 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(actions.len(), 2);
+        assert_eq!(actions.len(), 4);
         assert_eq!(actions[0].0, gitcomet_state::model::ComparisonSlot::A);
         assert_eq!(actions[1].0, gitcomet_state::model::ComparisonSlot::B);
         assert!(
             actions
                 .iter()
-                .all(|(_, endpoint)| endpoint.commit_id == head)
+                .take(2)
+                .all(|(_, endpoint)| endpoint.commit_id() == Some(&head))
         );
         assert!(
             actions
                 .iter()
+                .take(2)
                 .all(|(_, endpoint)| endpoint.label == "feature/payments · payments")
         );
+        assert!(actions.iter().skip(2).all(|(_, endpoint)| matches!(
+            &endpoint.endpoint,
+            gitcomet_state::model::ComparisonEndpoint::WorktreeDirty { path: dirty_path }
+                if dirty_path == &path
+        )));
     }
 
     #[test]
@@ -197,7 +230,8 @@ mod tests {
         assert!(!model.items.iter().any(|item| matches!(
             item,
             ContextMenuItem::Entry { action, .. }
-                if matches!(&**action, ContextMenuAction::SetComparisonSlot { .. })
+                if matches!(&**action, ContextMenuAction::SetComparisonSlot { endpoint, .. }
+                    if endpoint.commit_id().is_some())
         )));
     }
 }

@@ -314,6 +314,16 @@ pub trait GitRepository: Send + Sync {
             | HistoryMode::MergesOnly => self.log_head_page(limit, cursor),
         }
     }
+    fn log_history_mode_ordered_page(
+        &self,
+        mode: HistoryMode,
+        order: crate::domain::HistoryOrder,
+        limit: usize,
+        cursor: Option<&LogCursor>,
+    ) -> Result<LogPage> {
+        let _ = order;
+        self.log_history_mode_page(mode, limit, cursor)
+    }
     fn log_history_mode_page_cancellable(
         &self,
         mode: HistoryMode,
@@ -357,6 +367,23 @@ pub trait GitRepository: Send + Sync {
         let page = self.log_history_mode_page(mode, limit, cursor)?;
         cancellation.check_cancelled()?;
         Ok(page)
+    }
+
+    /// Ordered variant of [`Self::log_history_mode_page_streaming`]. Backends
+    /// may keep the default fast walk for `Date` and opt into a more expensive
+    /// topology-aware traversal only for `Ancestor`.
+    fn log_history_mode_ordered_page_streaming(
+        &self,
+        mode: HistoryMode,
+        order: crate::domain::HistoryOrder,
+        author: Option<&str>,
+        limit: usize,
+        cursor: Option<&LogCursor>,
+        cancellation: &CancellationToken,
+        on_chunk: &mut dyn FnMut(LogChunk),
+    ) -> Result<LogPage> {
+        let _ = order;
+        self.log_history_mode_page_streaming(mode, author, limit, cursor, cancellation, on_chunk)
     }
 
     /// [`Self::log_history_mode_page_streaming`] for callers with nothing to
@@ -429,6 +456,14 @@ pub trait GitRepository: Send + Sync {
     ) -> Result<Vec<CommitFileChange>> {
         Err(Error::new(ErrorKind::Unsupported(
             "range file listing is not implemented for this backend",
+        )))
+    }
+    /// Capture the complete visible state of `worktree` as an immutable Git
+    /// tree without changing its checkout or real index. Ignored files remain
+    /// excluded; non-ignored untracked files are included.
+    fn snapshot_worktree(&self, _worktree: &Path) -> Result<CommitId> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "worktree snapshots are not implemented for this backend",
         )))
     }
     /// Full `%B` messages of the given commits, in input order. Message-only

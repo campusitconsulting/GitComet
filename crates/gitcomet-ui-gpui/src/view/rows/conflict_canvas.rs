@@ -14,7 +14,6 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-const DIFF_FONT_SCALE: f32 = 0.80;
 const GUTTER_TEXT_LAYOUT_CACHE_MAX_ENTRIES: usize = 16_384;
 const CONFLICT_TEXT_LAYOUT_CACHE_MAX_ENTRIES: usize = 32_768;
 
@@ -726,7 +725,7 @@ fn diff_text_style(window: &Window) -> TextStyle {
 
 fn line_metrics(window: &Window) -> LineMetrics {
     let style = diff_text_style(window);
-    let font_size = style.font_size.to_pixels(window.rem_size()) * DIFF_FONT_SCALE;
+    let font_size = px(crate::font_preferences::current_editor_font_size_px() as f32);
     let line_height = style
         .line_height
         .to_pixels(font_size.into(), window.rem_size());

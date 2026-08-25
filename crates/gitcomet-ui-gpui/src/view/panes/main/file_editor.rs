@@ -1583,6 +1583,9 @@ impl MainPaneView {
             .min_w(px(0.0))
             .bg(theme.colors.editor.background)
             .font_family(editor_font_family)
+            .text_size(px(
+                crate::font_preferences::current_editor_font_size_px() as f32
+            ))
             .when(show_line_numbers || show_blame, |row| {
                 row.child(
                     div()

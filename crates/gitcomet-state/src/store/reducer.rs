@@ -7,7 +7,7 @@ mod repo_management;
 mod util;
 
 use crate::model::{
-    AppNotificationKind, AppState, AuthPromptState, AuthRetryOperation, BannerErrorState,
+    AppNotificationKind, AppState, AuthPromptState, AuthRetryOperation, BannerErrorState, Loadable,
     PendingCommitRetry, RepoId, SubmoduleAddProgressState, SubmoduleTrustCheckOperation,
     SubmoduleTrustCheckState, SubmoduleTrustPromptOperation, SubmoduleTrustPromptState,
 };
@@ -95,10 +95,12 @@ pub(crate) fn msg_requires_available_git(msg: &Msg) -> bool {
             | Msg::RepoActivated { .. }
             | Msg::RepoExternallyChanged { .. }
             | Msg::SetHistoryScope { .. }
+            | Msg::SetHistoryOrder { .. }
             | Msg::SetHistoryAuthorFilter { .. }
             | Msg::LoadMoreHistory { .. }
             | Msg::SelectCommit { .. }
             | Msg::CompareCommitRange { .. }
+            | Msg::CompareComparisonEndpoints { .. }
             | Msg::CompareWithMarked { .. }
             | Msg::CompareWithWorkingTree { .. }
             | Msg::SelectNamedComparison { .. }
@@ -769,6 +771,7 @@ fn is_view_navigation(msg: &Msg) -> bool {
             // history selection; it just is not a commit.
             | Msg::SelectWorktreeUncommitted { .. }
             | Msg::CompareCommitRange { .. }
+            | Msg::CompareComparisonEndpoints { .. }
             | Msg::CompareWithMarked { .. }
             | Msg::CompareWithWorkingTree { .. }
             | Msg::SelectNamedComparison { .. }
@@ -892,23 +895,85 @@ fn reduce_inner(
             Vec::new()
         }
         Msg::Internal(crate::msg::InternalMsg::LocalReviewCommentPersisted {
-            repo_id: _,
+            repo_id,
             session_id,
             comment_id,
             result,
         }) => {
             match result {
-                Ok((_path, revision)) => util::push_notification(
-                    state,
-                    AppNotificationKind::Success,
-                    format!(
-                        "Local review comment saved ({session_id}, {comment_id}, revision {revision})."
-                    ),
-                ),
+                Ok((_path, revision)) => {
+                    util::push_notification(
+                        state,
+                        AppNotificationKind::Success,
+                        format!(
+                            "Local review comment saved ({session_id}, {comment_id}, revision {revision})."
+                        ),
+                    );
+                    let Some(repo) = state.repos.iter().find(|repo| repo.id == repo_id) else {
+                        return Vec::new();
+                    };
+                    return vec![Effect::LoadLocalReviewSession {
+                        repo_id,
+                        workdir: repo.spec.workdir.clone(),
+                        session_id,
+                    }];
+                }
                 Err(error) => util::push_notification(
                     state,
                     AppNotificationKind::Error,
                     format!("Failed to save local review comment: {error}"),
+                ),
+            }
+            Vec::new()
+        }
+        Msg::Internal(crate::msg::InternalMsg::LocalReviewSessionLoaded {
+            repo_id,
+            session_id,
+            result,
+        }) => {
+            if let Some(repo) = state.repos.iter_mut().find(|repo| repo.id == repo_id)
+                && repo.local_review.session_id.as_deref() == Some(session_id.as_str())
+            {
+                match result {
+                    Ok((_path, revision, session)) => {
+                        repo.local_review.session = Loadable::Ready(session);
+                        repo.local_review.store_revision = revision;
+                    }
+                    Err(error) => repo.local_review.session = Loadable::Error(error),
+                }
+                repo.local_review.rev = repo.local_review.rev.wrapping_add(1);
+            }
+            Vec::new()
+        }
+        Msg::Internal(crate::msg::InternalMsg::LocalReviewCommentStatusPersisted {
+            repo_id,
+            session_id,
+            comment_id,
+            status,
+            result,
+        }) => {
+            match result {
+                Ok((_path, revision)) => {
+                    util::push_notification(
+                        state,
+                        AppNotificationKind::Success,
+                        format!(
+                            "Local review comment {comment_id} is now {status:?} (revision {revision})."
+                        ),
+                    );
+                    let Some(repo) = state.repos.iter().find(|repo| repo.id == repo_id) else {
+                        return Vec::new();
+                    };
+                    return vec![Effect::LoadLocalReviewSession {
+                        repo_id,
+                        workdir: repo.spec.workdir.clone(),
+                        session_id,
+                    }];
+                }
+                Err(error) => util::push_notification(
+                    state,
+                    AppNotificationKind::Error,
+                    format!("Failed to update local review comment: {error}"),
                 ),
             }
             Vec::new()
@@ -939,6 +1004,9 @@ fn reduce_inner(
         }
         Msg::SetHistoryScope { repo_id, scope } => {
             external_and_history::set_history_scope(state, repo_id, scope)
+        }
+        Msg::SetHistoryOrder { repo_id, order } => {
+            external_and_history::set_history_order(state, repo_id, order)
         }
         Msg::SetHistoryAuthorFilter { repo_id, author } => {
             external_and_history::set_history_author_filter(state, repo_id, author)
@@ -982,6 +1050,9 @@ fn reduce_inner(
             to_label,
             effects::ComparisonSource::Explicit,
         ),
+        Msg::CompareComparisonEndpoints { repo_id, a, b } => {
+            effects::compare_comparison_endpoints(state, repo_id, a, b)
+        }
         Msg::CompareWithWorkingTree {
             repo_id,
             from,
@@ -1038,6 +1109,37 @@ fn reduce_inner(
             workdir,
             session,
             comment,
+        }],
+        Msg::ReloadLocalReviewSession {
+            repo_id,
+            workdir,
+            session_id,
+        } => {
+            if let Some(repo) = state.repos.iter_mut().find(|repo| repo.id == repo_id) {
+                repo.local_review.session_id = Some(session_id.clone());
+                repo.local_review.session = Loadable::Loading;
+                repo.local_review.rev = repo.local_review.rev.wrapping_add(1);
+            }
+            vec![Effect::LoadLocalReviewSession {
+                repo_id,
+                workdir,
+                session_id,
+            }]
+        }
+        Msg::SetLocalReviewCommentStatus {
+            repo_id,
+            workdir,
+            session_id,
+            comment_id,
+            status,
+            updated_at_unix_ms,
+        } => vec![Effect::SetLocalReviewCommentStatus {
+            repo_id,
+            workdir,
+            session_id,
+            comment_id,
+            status,
+            updated_at_unix_ms,
         }],
         Msg::SelectDiff { repo_id, target } => diff_selection::select_diff(state, repo_id, target),
         Msg::OpenInlineSubmoduleDiff {
@@ -2041,6 +2143,13 @@ fn reduce_inner(
         Msg::Internal(crate::msg::InternalMsg::WorktreeDirtyLoaded { repo_id, result }) => {
             effects::worktree_dirty_loaded(state, repo_id, result)
         }
+        Msg::Internal(crate::msg::InternalMsg::ComparisonEndpointsSnapshotted {
+            repo_id,
+            request,
+            a,
+            b,
+            result,
+        }) => effects::comparison_endpoints_snapshotted(state, repo_id, request, a, b, result),
         Msg::Internal(crate::msg::InternalMsg::RefMetadataLoaded { repo_id, result }) => {
             effects::ref_metadata_loaded(state, repo_id, result)
         }
@@ -3530,10 +3639,123 @@ mod comparison_tests {
     }
 
     fn endpoint(id: &str, label: &str) -> ComparisonMark {
-        ComparisonMark {
-            commit_id: CommitId(id.into()),
-            label: label.into(),
-        }
+        ComparisonMark::commit(CommitId(id.into()), label)
+    }
+
+    #[test]
+    fn dirty_worktree_pair_is_snapshotted_before_opening_the_range() {
+        let repo_id = RepoId(1);
+        let mut state = state_with_log(repo_id);
+        let a = ComparisonMark::worktree_dirty("/tmp/worktree-a".into(), "agent A");
+        let b = ComparisonMark::worktree_dirty("/tmp/worktree-b".into(), "agent B");
+        let shelf = &mut state.repos[0].comparison_shelf;
+        shelf.a = Some(a.clone());
+        shelf.b = Some(b.clone());
+
+        let effects = dispatch_effects(
+            &mut state,
+            Msg::CompareComparisonEndpoints {
+                repo_id,
+                a: a.clone(),
+                b: b.clone(),
+            },
+        );
+        let request = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::SnapshotComparisonEndpoints {
+                    request,
+                    a: effect_a,
+                    b: effect_b,
+                    ..
+                } if effect_a == &a && effect_b == &b => Some(*request),
+                _ => None,
+            })
+            .expect("dirty endpoints must be snapshotted");
+        assert!(
+            repo(&state, repo_id)
+                .history_state
+                .range_selection
+                .is_none()
+        );
+
+        let from_tree = CommitId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into());
+        let to_tree = CommitId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        let effects = dispatch_effects(
+            &mut state,
+            Msg::Internal(crate::msg::InternalMsg::ComparisonEndpointsSnapshotted {
+                repo_id,
+                request,
+                a,
+                b,
+                result: Ok((from_tree.clone(), to_tree.clone())),
+            }),
+        );
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::LoadRangeFiles { from, to: Some(to), .. }
+                if from == &from_tree && to == &to_tree
+        )));
+        assert_eq!(
+            repo(&state, repo_id).diff_state.diff_target,
+            Some(DiffTarget::CommitRange {
+                from_commit_id: from_tree,
+                to_commit_id: Some(to_tree),
+                path: None,
+            })
+        );
+    }
+
+    #[test]
+    fn stale_dirty_worktree_snapshot_is_ignored_after_endpoint_change() {
+        let repo_id = RepoId(1);
+        let mut state = state_with_log(repo_id);
+        let a = ComparisonMark::worktree_dirty("/tmp/worktree-a".into(), "agent A");
+        let b = ComparisonMark::worktree_dirty("/tmp/worktree-b".into(), "agent B");
+        let shelf = &mut state.repos[0].comparison_shelf;
+        shelf.a = Some(a.clone());
+        shelf.b = Some(b.clone());
+        let effects = dispatch_effects(
+            &mut state,
+            Msg::CompareComparisonEndpoints {
+                repo_id,
+                a: a.clone(),
+                b: b.clone(),
+            },
+        );
+        let request = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::SnapshotComparisonEndpoints { request, .. } => Some(*request),
+                _ => None,
+            })
+            .expect("snapshot request");
+        dispatch_effects(
+            &mut state,
+            Msg::SetComparisonSlot {
+                repo_id,
+                slot: ComparisonSlot::B,
+                endpoint: endpoint("c3", "feature"),
+            },
+        );
+
+        let effects = dispatch_effects(
+            &mut state,
+            Msg::Internal(crate::msg::InternalMsg::ComparisonEndpointsSnapshotted {
+                repo_id,
+                request,
+                a,
+                b,
+                result: Ok((CommitId("a".into()), CommitId("b".into()))),
+            }),
+        );
+        assert!(effects.is_empty());
+        assert!(
+            repo(&state, repo_id)
+                .history_state
+                .range_selection
+                .is_none()
+        );
     }
 
     #[test]

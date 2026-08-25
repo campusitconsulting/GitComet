@@ -293,6 +293,7 @@ fn repo_monitor_active_repo_activation_coalesces_with_in_flight_refresh() {
         let loads_in_flight = &mut state.repos[0].loads_in_flight;
         loads_in_flight.request_primary_refresh_batch(crate::model::PendingLogLoad {
             scope: gitcomet_core::domain::HistoryMode::FullReachable,
+            order: gitcomet_core::domain::HistoryOrder::Date,
             author: None,
             limit: 200,
             cursor: None,

@@ -727,6 +727,12 @@ fn next_pane_resize_drag_width_recomputes_bounds_when_window_changes() {
 }
 
 #[test]
+fn review_details_resize_follows_the_side_selected_by_the_layout_preset() {
+    assert_eq!(details_resize_drag_sign(true), 1.0);
+    assert_eq!(details_resize_drag_sign(false), -1.0);
+}
+
+#[test]
 fn diff_split_column_widths_from_available_clamps_to_min_widths() {
     let (left, right) = diff_split_column_widths_from_available(px(556.0), px(160.0), 0.95);
 

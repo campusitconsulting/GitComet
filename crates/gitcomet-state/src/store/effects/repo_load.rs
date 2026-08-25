@@ -480,6 +480,7 @@ pub(super) fn schedule_load_log(
     repo_id: RepoId,
     seq: crate::model::LogLoadSeq,
     scope: LogScope,
+    order: gitcomet_core::domain::HistoryOrder,
     author: Option<String>,
     limit: usize,
     cursor: Option<LogCursor>,
@@ -510,8 +511,9 @@ pub(super) fn schedule_load_log(
                         }),
                     );
                 };
-                repo.log_history_mode_page_streaming(
+                repo.log_history_mode_ordered_page_streaming(
                     scope,
+                    order,
                     author.as_deref(),
                     limit,
                     cursor_ref,
@@ -1618,6 +1620,37 @@ pub(super) fn schedule_load_range_files(
                 from: from.clone(),
                 to: to.clone(),
                 request,
+                result,
+            }),
+        );
+    });
+}
+
+pub(super) fn schedule_snapshot_comparison_endpoints(
+    executor: &TaskExecutor,
+    repos: &RepoMap,
+    msg_tx: StoreWorkerSender,
+    repo_id: RepoId,
+    request: u64,
+    a: crate::model::ComparisonMark,
+    b: crate::model::ComparisonMark,
+) {
+    use crate::model::ComparisonEndpoint;
+
+    spawn_with_repo(executor, repos, repo_id, msg_tx, move |repo, msg_tx| {
+        let resolve = |endpoint: &ComparisonEndpoint| match endpoint {
+            ComparisonEndpoint::Commit(commit_id) => Ok(commit_id.clone()),
+            ComparisonEndpoint::WorktreeDirty { path } => repo.snapshot_worktree(path),
+        };
+        let result =
+            resolve(&a.endpoint).and_then(|a_id| resolve(&b.endpoint).map(|b_id| (a_id, b_id)));
+        send_or_log(
+            &msg_tx,
+            Msg::Internal(crate::msg::InternalMsg::ComparisonEndpointsSnapshotted {
+                repo_id,
+                request,
+                a,
+                b,
                 result,
             }),
         );

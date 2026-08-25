@@ -2,17 +2,24 @@ use crate::bundled_fonts;
 use gitcomet_state::session;
 use gpui::{BorrowAppContext, FontFeatures, Window};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, OnceLock};
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicU16, Ordering},
+};
 
 pub(crate) const UI_SYSTEM_FONT_FAMILY: &str = ".SystemUIFont";
 pub(crate) const DEFAULT_UI_FONT_FAMILY: &str = bundled_fonts::IBM_PLEX_SANS_FONT_FAMILY;
 pub(crate) const EDITOR_MONOSPACE_FONT_FAMILY: &str = bundled_fonts::LILEX_FONT_FAMILY;
 pub(crate) const DEFAULT_USE_FONT_LIGATURES: bool = false;
+pub(crate) const UI_FONT_SIZE_PRESETS: &[u16] = &[11, 12, 13, 14, 16, 18, 20, 22, 24];
+pub(crate) const EDITOR_FONT_SIZE_PRESETS: &[u16] = &[9, 10, 11, 12, 13, 14, 16, 18, 20, 24, 28];
 
 const LEGACY_EDITOR_MONOSPACE_FONT_FAMILY: &str = "monospace";
 
 static FONT_OPTION_CATALOG: OnceLock<FontOptionCatalog> = OnceLock::new();
 static SYSTEM_FONT_CATALOG: OnceLock<SystemFontCatalog> = OnceLock::new();
+static UI_FONT_SIZE_PX: AtomicU16 = AtomicU16::new(session::DEFAULT_UI_FONT_SIZE_PX);
+static EDITOR_FONT_SIZE_PX: AtomicU16 = AtomicU16::new(session::DEFAULT_EDITOR_FONT_SIZE_PX);
 
 // These follow the Monaco workbench defaults, but use resolvable real families where the
 // CSS stack starts with a platform token such as -apple-system or system-ui.
@@ -132,6 +139,8 @@ pub(crate) struct AppFontPreferences {
     pub(crate) ui_font_family: String,
     pub(crate) editor_font_family: String,
     pub(crate) use_font_ligatures: bool,
+    pub(crate) ui_font_size_px: u16,
+    pub(crate) editor_font_size_px: u16,
     initialized: bool,
 }
 
@@ -141,6 +150,8 @@ impl Default for AppFontPreferences {
             ui_font_family: DEFAULT_UI_FONT_FAMILY.to_string(),
             editor_font_family: EDITOR_MONOSPACE_FONT_FAMILY.to_string(),
             use_font_ligatures: DEFAULT_USE_FONT_LIGATURES,
+            ui_font_size_px: session::DEFAULT_UI_FONT_SIZE_PX,
+            editor_font_size_px: session::DEFAULT_EDITOR_FONT_SIZE_PX,
             initialized: false,
         }
     }
@@ -166,6 +177,10 @@ pub(crate) fn display_label(font_family: &str) -> String {
         UI_SYSTEM_FONT_FAMILY => "System Default".to_string(),
         _ => font_family.to_string(),
     }
+}
+
+pub(crate) fn font_size_label(size_px: u16) -> String {
+    format!("{size_px} px")
 }
 
 pub(crate) fn ui_font_options(window: &Window) -> Arc<[String]> {
@@ -232,6 +247,31 @@ where
     applied_font_features(current(cx).use_font_ligatures)
 }
 
+pub(crate) fn current_ui_font_size_px() -> u16 {
+    UI_FONT_SIZE_PX.load(Ordering::Relaxed)
+}
+
+pub(crate) fn current_editor_font_size_px() -> u16 {
+    EDITOR_FONT_SIZE_PX.load(Ordering::Relaxed)
+}
+
+pub(crate) fn set_current_sizes<C>(
+    cx: &mut C,
+    ui_font_size_px: u16,
+    editor_font_size_px: u16,
+) -> AppFontPreferences
+where
+    C: BorrowAppContext,
+{
+    let mut next = current(cx);
+    next.ui_font_size_px = session::normalize_ui_font_size_px(Some(ui_font_size_px));
+    next.editor_font_size_px = session::normalize_editor_font_size_px(Some(editor_font_size_px));
+    next.initialized = true;
+    publish_font_sizes(&next);
+    cx.set_global(next.clone());
+    next
+}
+
 pub(crate) fn current_or_initialize_from_session<C>(
     window: &Window,
     ui_session: &session::UiSession,
@@ -241,7 +281,7 @@ where
     C: BorrowAppContext,
 {
     let current = current(cx);
-    let next = if current.initialized {
+    let mut next = if current.initialized {
         resolve_for_window(
             window,
             Some(current.ui_font_family.as_str()),
@@ -256,6 +296,15 @@ where
             ui_session.use_font_ligatures,
         )
     };
+    if current.initialized {
+        next.ui_font_size_px = current.ui_font_size_px;
+        next.editor_font_size_px = current.editor_font_size_px;
+    } else {
+        next.ui_font_size_px = session::normalize_ui_font_size_px(ui_session.ui_font_size_px);
+        next.editor_font_size_px =
+            session::normalize_editor_font_size_px(ui_session.editor_font_size_px);
+    }
+    publish_font_sizes(&next);
     cx.set_global(next.clone());
     next
 }
@@ -285,6 +334,8 @@ where
         ui_font_family,
         editor_font_family,
         use_font_ligatures,
+        ui_font_size_px: current_ui_font_size_px(),
+        editor_font_size_px: current_editor_font_size_px(),
         initialized: true,
     };
     cx.set_global(next.clone());
@@ -511,8 +562,15 @@ fn resolve_for_window(
             &catalog.editor_options,
         ),
         use_font_ligatures: use_font_ligatures.unwrap_or(DEFAULT_USE_FONT_LIGATURES),
+        ui_font_size_px: current_ui_font_size_px(),
+        editor_font_size_px: current_editor_font_size_px(),
         initialized: true,
     }
+}
+
+fn publish_font_sizes(preferences: &AppFontPreferences) {
+    UI_FONT_SIZE_PX.store(preferences.ui_font_size_px, Ordering::Relaxed);
+    EDITOR_FONT_SIZE_PX.store(preferences.editor_font_size_px, Ordering::Relaxed);
 }
 
 fn font_option_catalog(window: &Window) -> &'static FontOptionCatalog {

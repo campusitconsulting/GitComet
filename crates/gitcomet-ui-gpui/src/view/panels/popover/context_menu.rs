@@ -522,19 +522,44 @@ impl PopoverHost {
                 copy_text,
                 copy_target,
                 local_review_draft,
-            } => Some(diff_editor::model(
-                *repo_id,
-                *area,
-                path,
-                hunk_patch,
-                *hunks_count,
-                lines_patch,
-                discard_lines_patch,
-                *lines_count,
-                copy_text,
-                *copy_target,
-                local_review_draft.as_ref(),
-            )),
+            } => {
+                let local_review_counts = self
+                    .state
+                    .repos
+                    .iter()
+                    .find(|repo| repo.id == *repo_id)
+                    .and_then(|repo| {
+                        repo.local_review.session_id.as_ref()?;
+                        let comments = match &repo.local_review.session {
+                            Loadable::Ready(Some(session)) => session.comments.as_slice(),
+                            _ => &[],
+                        };
+                        Some(comments.iter().fold((0, 0), |(open, resolved), comment| {
+                            match comment.status {
+                                gitcomet_state::local_review::ReviewStatus::Open => {
+                                    (open + 1, resolved)
+                                }
+                                gitcomet_state::local_review::ReviewStatus::Resolved => {
+                                    (open, resolved + 1)
+                                }
+                            }
+                        }))
+                    });
+                Some(diff_editor::model(
+                    *repo_id,
+                    *area,
+                    path,
+                    hunk_patch,
+                    *hunks_count,
+                    lines_patch,
+                    discard_lines_patch,
+                    *lines_count,
+                    copy_text,
+                    *copy_target,
+                    local_review_draft.as_ref(),
+                    local_review_counts,
+                ))
+            }
             PopoverKind::ConflictResolverInputRowMenu {
                 line_label,
                 line_target,
@@ -1030,6 +1055,9 @@ impl PopoverHost {
             }
             ContextMenuAction::SetHistoryScope { repo_id, scope } => {
                 self.store.dispatch(Msg::SetHistoryScope { repo_id, scope });
+            }
+            ContextMenuAction::SetHistoryOrder { repo_id, order } => {
+                self.store.dispatch(Msg::SetHistoryOrder { repo_id, order });
             }
             ContextMenuAction::SetDiffContentMode { mode } => {
                 self.diff_content_mode = mode;

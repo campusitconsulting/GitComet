@@ -47,8 +47,7 @@ const HISTORY_MODE_UI_SPECS: [HistoryModeUiSpec; 5] = [
     },
 ];
 
-pub(crate) const HISTORY_MODE_TOOLTIP_TEXT: &str =
-    "History mode (Full reachable / First-parent / No merges / Merges only / All branches)";
+pub(crate) const HISTORY_MODE_TOOLTIP_TEXT: &str = "Choose history scope and commit order. Date is the fast default; Ancestor uses topology-aware paging (shallow repositories fall back to Date).";
 
 pub(crate) fn history_mode_ui_specs() -> &'static [HistoryModeUiSpec] {
     &HISTORY_MODE_UI_SPECS

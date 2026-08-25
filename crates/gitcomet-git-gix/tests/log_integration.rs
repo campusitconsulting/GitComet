@@ -1,4 +1,4 @@
-use gitcomet_core::domain::{CommitId, FileStatusKind, HistoryMode, LogCursor};
+use gitcomet_core::domain::{CommitId, FileStatusKind, HistoryMode, HistoryOrder, LogCursor};
 use gitcomet_core::error::{ErrorKind, GitFailureId};
 use gitcomet_core::services::GitBackend;
 use gitcomet_git_gix::GixBackend;
@@ -515,6 +515,110 @@ fn every_history_mode_paginates_through_a_resumable_walk() {
     }
 }
 
+#[test]
+fn ancestor_order_keeps_clock_skewed_parent_after_both_children_across_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    run_git(&repo, &["init", "-b", "main"]);
+    run_git(&repo, &["config", "user.email", "you@example.com"]);
+    run_git(&repo, &["config", "user.name", "You"]);
+    run_git(&repo, &["config", "commit.gpgsign", "false"]);
+
+    // The shared parent claims to be newer than both children. A plain
+    // commit-time priority walk can emit it after visiting only one child;
+    // topo order must wait until both children have been emitted.
+    commit_file_at(&repo, "base.txt", "base\n", "skewed parent", 1_000);
+    let parent = git_stdout(&repo, &["rev-parse", "HEAD"]);
+    run_git(&repo, &["checkout", "-b", "side"]);
+    commit_file_at(&repo, "side.txt", "side\n", "side child", 80);
+    let side = git_stdout(&repo, &["rev-parse", "HEAD"]);
+    run_git(&repo, &["checkout", "main"]);
+    commit_file_at(&repo, "main.txt", "main\n", "main child", 90);
+    let main = git_stdout(&repo, &["rev-parse", "HEAD"]);
+    run_git_at(&repo, &["merge", "--no-ff", "side", "-m", "merge"], 100);
+
+    let opened = GixBackend.open(&repo).unwrap();
+    let whole = opened
+        .log_history_mode_ordered_page(HistoryMode::FullReachable, HistoryOrder::Ancestor, 20, None)
+        .unwrap();
+    let ids = whole
+        .commits
+        .iter()
+        .map(|commit| commit.id.as_ref())
+        .collect::<Vec<_>>();
+    let parent_ix = ids.iter().position(|id| *id == parent).unwrap();
+    assert!(parent_ix > ids.iter().position(|id| *id == main).unwrap());
+    assert!(parent_ix > ids.iter().position(|id| *id == side).unwrap());
+
+    let mut paged = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = opened
+            .log_history_mode_ordered_page(
+                HistoryMode::FullReachable,
+                HistoryOrder::Ancestor,
+                1,
+                cursor.as_ref(),
+            )
+            .unwrap();
+        paged.extend(page.commits.iter().map(|commit| commit.id.clone()));
+        let Some(next) = page.next_cursor else { break };
+        assert!(next.resume_token.is_some());
+        cursor = Some(next);
+    }
+    assert_eq!(
+        paged,
+        whole
+            .commits
+            .iter()
+            .map(|commit| commit.id.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn paged_walk_token_cannot_cross_history_orders() {
+    let fixture = HistoryModeFixture::new();
+    let opened = GixBackend.open(fixture.repo()).unwrap();
+    let date_first = opened
+        .log_history_mode_ordered_page(HistoryMode::FullReachable, HistoryOrder::Date, 1, None)
+        .unwrap();
+    let cursor = date_first
+        .next_cursor
+        .expect("date walk should have another page");
+
+    // Passing the opaque Date token to Ancestor must rebuild and gate by
+    // last_seen, not resume the differently ordered cached iterator.
+    let ancestor_from_foreign_cursor = opened
+        .log_history_mode_ordered_page(
+            HistoryMode::FullReachable,
+            HistoryOrder::Ancestor,
+            20,
+            Some(&cursor),
+        )
+        .unwrap();
+    assert!(
+        ancestor_from_foreign_cursor
+            .commits
+            .iter()
+            .all(|commit| commit.id != cursor.last_seen)
+    );
+}
+
+#[test]
+fn first_parent_ancestor_order_matches_the_fast_single_chain_walk() {
+    let fixture = HistoryModeFixture::new();
+    let opened = GixBackend.open(fixture.repo()).unwrap();
+    let fast = opened
+        .log_history_mode_ordered_page(HistoryMode::FirstParent, HistoryOrder::Date, 20, None)
+        .unwrap();
+    let ancestor = opened
+        .log_history_mode_ordered_page(HistoryMode::FirstParent, HistoryOrder::Ancestor, 20, None)
+        .unwrap();
+    assert_eq!(ancestor.commits, fast.commits);
+}
+
 /// The scope this mattered most for: `AllBranches` walks from every ref, so
 /// rebuilding it per page is the most expensive rebuild there is.
 #[test]
@@ -626,6 +730,21 @@ fn shallow_history_modes_paginate_and_stop_at_the_boundary() {
             base_id.as_str(),
             "depth-2 clone should not expose commits beyond the shallow boundary"
         );
+
+        let ancestor_first = opened
+            .log_history_mode_ordered_page(mode, HistoryOrder::Ancestor, 1, None)
+            .expect("ancestor order should gracefully fall back at a shallow boundary");
+        assert_eq!(ancestor_first.commits[0].id.as_ref(), tip_id.as_str());
+        let ancestor_second = opened
+            .log_history_mode_ordered_page(
+                mode,
+                HistoryOrder::Ancestor,
+                1,
+                ancestor_first.next_cursor.as_ref(),
+            )
+            .unwrap();
+        assert_eq!(ancestor_second.commits[0].id.as_ref(), middle_id.as_str());
+        assert!(ancestor_second.next_cursor.is_none());
     }
 }
 

@@ -131,6 +131,7 @@ pub(super) fn internal_msg_name(msg: &InternalMsg) -> &'static str {
         InternalMsg::StashesLoaded { .. } => "StashesLoaded",
         InternalMsg::WorktreesLoaded { .. } => "WorktreesLoaded",
         InternalMsg::WorktreeDirtyLoaded { .. } => "WorktreeDirtyLoaded",
+        InternalMsg::ComparisonEndpointsSnapshotted { .. } => "ComparisonEndpointsSnapshotted",
         InternalMsg::RefMetadataLoaded { .. } => "RefMetadataLoaded",
         InternalMsg::SubmodulesLoaded { .. } => "SubmodulesLoaded",
         InternalMsg::RebaseStateLoaded { .. } => "RebaseStateLoaded",
@@ -157,6 +158,7 @@ pub(super) fn effect_name(effect: &Effect) -> &'static str {
         Effect::LoadStashes { .. } => "LoadStashes",
         Effect::LoadWorktrees { .. } => "LoadWorktrees",
         Effect::LoadWorktreeDirty { .. } => "LoadWorktreeDirty",
+        Effect::SnapshotComparisonEndpoints { .. } => "SnapshotComparisonEndpoints",
         Effect::LoadRefMetadata { .. } => "LoadRefMetadata",
         Effect::LoadSubmodules { .. } => "LoadSubmodules",
         Effect::LoadRebaseAndMergeState { .. } => "LoadRebaseAndMergeState",
@@ -165,6 +167,8 @@ pub(super) fn effect_name(effect: &Effect) -> &'static str {
         Effect::PersistSession { .. } => "PersistSession",
         Effect::PersistRecentRepo { .. } => "PersistRecentRepo",
         Effect::PersistLocalReviewComment { .. } => "PersistLocalReviewComment",
+        Effect::LoadLocalReviewSession { .. } => "LoadLocalReviewSession",
+        Effect::SetLocalReviewCommentStatus { .. } => "SetLocalReviewCommentStatus",
         _ => "Effect",
     }
 }
@@ -187,6 +191,7 @@ pub(super) fn effect_repo_id(effect: &Effect) -> Option<RepoId> {
         | Effect::LoadStashes { repo_id, .. }
         | Effect::LoadWorktrees { repo_id }
         | Effect::LoadWorktreeDirty { repo_id, .. }
+        | Effect::SnapshotComparisonEndpoints { repo_id, .. }
         | Effect::LoadRefMetadata { repo_id }
         | Effect::LoadSubmodules { repo_id }
         | Effect::LoadRebaseAndMergeState { repo_id }
@@ -198,6 +203,8 @@ pub(super) fn effect_repo_id(effect: &Effect) -> Option<RepoId> {
         Effect::PersistRepoHistoryModesBatch { repo_id, .. } => *repo_id,
         Effect::PersistRepoHistoryAuthorFilter { repo_id, .. } => *repo_id,
         Effect::PersistLocalReviewComment { repo_id, .. } => Some(*repo_id),
+        Effect::LoadLocalReviewSession { repo_id, .. }
+        | Effect::SetLocalReviewCommentStatus { repo_id, .. } => Some(*repo_id),
         _ => None,
     }
 }

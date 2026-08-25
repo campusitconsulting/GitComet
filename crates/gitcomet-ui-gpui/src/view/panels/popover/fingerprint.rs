@@ -201,7 +201,8 @@ fn repo_for_popover<'a>(state: &'a AppState, popover: &PopoverKind) -> Option<&'
         | PopoverKind::HistoryBranchFilter { repo_id }
         | PopoverKind::HistoryAuthorFilter { repo_id }
         | PopoverKind::CommitShaLinkMenu { repo_id, .. }
-        | PopoverKind::ReflogEntryMenu { repo_id, .. } => Some(*repo_id),
+        | PopoverKind::ReflogEntryMenu { repo_id, .. }
+        | PopoverKind::LocalReviewThreads { repo_id } => Some(*repo_id),
         PopoverKind::LocalReviewCommentPrompt { draft } => Some(draft.repo_id),
     }?;
 
@@ -290,6 +291,10 @@ fn hash_repo_for_popover<H: Hasher>(repo: &RepoState, popover: &PopoverKind, has
         PopoverKind::FileHistory { .. } => {
             repo.history_state.file_history_path.hash(hasher);
             view_fingerprint::hash_loadable_arc(&repo.history_state.file_history, hasher);
+        }
+
+        PopoverKind::LocalReviewThreads { .. } => {
+            repo.local_review.rev.hash(hasher);
         }
 
         PopoverKind::DiffHunkMenu { .. }
@@ -683,6 +688,10 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
             }
             draft.old_line.hash(hasher);
             draft.new_line.hash(hasher);
+        }
+        PopoverKind::LocalReviewThreads { repo_id } => {
+            100u8.hash(hasher);
+            repo_id.hash(hasher);
         }
         PopoverKind::ConflictResolverInputRowMenu {
             line_label,

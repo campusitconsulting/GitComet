@@ -171,7 +171,7 @@ fn commit_menu_exposes_explicit_a_and_b_comparison_actions(cx: &mut gpui::TestAp
         };
         assert_eq!(action_repo, repo_id);
         assert_eq!(slot, expected_slot);
-        assert_eq!(endpoint.commit_id, commit_id);
+        assert_eq!(endpoint.commit_id(), Some(&commit_id));
         assert_eq!(endpoint.label, "12345678");
     }
 }

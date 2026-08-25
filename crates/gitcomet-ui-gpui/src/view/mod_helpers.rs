@@ -4621,6 +4621,9 @@ pub(super) enum PopoverKind {
     LocalReviewCommentPrompt {
         draft: super::local_review_ui::LocalReviewCommentDraft,
     },
+    LocalReviewThreads {
+        repo_id: RepoId,
+    },
     ConflictResolverInputRowMenu {
         line_label: SharedString,
         line_target: ResolverPickTarget,

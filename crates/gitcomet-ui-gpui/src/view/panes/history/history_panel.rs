@@ -453,8 +453,13 @@ impl HistoryView {
         let scope_label: SharedString = self
             .active_repo()
             .map(|r| {
-                crate::view::history_mode::history_mode_label(r.history_state.history_scope)
-                    .to_string()
+                let mode =
+                    crate::view::history_mode::history_mode_label(r.history_state.history_scope);
+                let order = match r.history_state.history_order {
+                    gitcomet_core::domain::HistoryOrder::Date => "Date",
+                    gitcomet_core::domain::HistoryOrder::Ancestor => "Ancestor",
+                };
+                format!("{mode} · {order}")
             })
             .unwrap_or_else(|| {
                 crate::view::history_mode::history_mode_label(

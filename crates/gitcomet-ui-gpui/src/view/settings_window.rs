@@ -221,12 +221,23 @@ fn history_graph_node_style_label(
     }
 }
 
+fn workspace_layout_label(layout: session::WorkspaceLayoutPreset) -> &'static str {
+    match layout {
+        session::WorkspaceLayoutPreset::SourceTreeReview => "SourceTree review",
+        session::WorkspaceLayoutPreset::WideReview => "Wide diff review",
+        session::WorkspaceLayoutPreset::Classic => "Classic GitComet",
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SettingsSection {
     Theme,
+    WorkspaceLayout,
     UiScale,
     UiFont,
+    UiFontSize,
     EditorFont,
+    EditorFontSize,
     ExternalCodeEditor,
     DateFormat,
     Timezone,
@@ -251,9 +262,12 @@ impl SettingsSection {
     fn category(self) -> SettingsCategory {
         match self {
             Self::Theme
+            | Self::WorkspaceLayout
             | Self::UiScale
             | Self::UiFont
+            | Self::UiFontSize
             | Self::EditorFont
+            | Self::EditorFontSize
             | Self::ExternalCodeEditor
             | Self::DateFormat
             | Self::Timezone => SettingsCategory::General,
@@ -453,7 +467,10 @@ pub(crate) struct SettingsWindowView {
     ui_scale_percent: u32,
     ui_font_family: String,
     editor_font_family: String,
+    ui_font_size_px: u16,
+    editor_font_size_px: u16,
     use_font_ligatures: bool,
+    workspace_layout: session::WorkspaceLayoutPreset,
     ui_font_options: Arc<[String]>,
     editor_font_options: Arc<[String]>,
     external_editor_options: Arc<[crate::external_editor::ExternalEditorOption]>,
@@ -858,8 +875,12 @@ impl SettingsWindowView {
 
         let ui_session = session::load();
         let ui_scale = ui_scale::current_or_initialize_from_session(&ui_session, cx);
+        let workspace_layout = ui_session
+            .workspace_layout
+            .unwrap_or(session::WorkspaceLayoutPreset::SourceTreeReview);
         let font_preferences =
             crate::font_preferences::current_or_initialize_from_session(window, &ui_session, cx);
+        ui_scale::apply_to_window(window, ui_scale.percent);
         let theme_mode = ui_session
             .theme_mode
             .as_deref()
@@ -1121,7 +1142,10 @@ impl SettingsWindowView {
             ui_scale_percent: ui_scale.percent,
             ui_font_family: font_preferences.ui_font_family,
             editor_font_family: font_preferences.editor_font_family,
+            ui_font_size_px: font_preferences.ui_font_size_px,
+            editor_font_size_px: font_preferences.editor_font_size_px,
             use_font_ligatures: font_preferences.use_font_ligatures,
+            workspace_layout,
             ui_font_options: crate::font_preferences::ui_font_options(window),
             editor_font_options: crate::font_preferences::editor_font_options(window),
             external_editor_options,
@@ -1237,7 +1261,7 @@ impl SettingsWindowView {
             window_height: None,
             sidebar_width: None,
             details_width: None,
-            workspace_layout: None,
+            workspace_layout: Some(self.workspace_layout),
             review_split_percent: None,
             sidebar_collapsed: None,
             sidebar_show_worktree_badges: Some(self.sidebar_show_worktree_badges),
@@ -1812,6 +1836,60 @@ impl SettingsWindowView {
         cx.notify();
     }
 
+    fn set_ui_font_size(
+        &mut self,
+        size_px: u16,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let size_px = session::normalize_ui_font_size_px(Some(size_px));
+        if self.ui_font_size_px == size_px {
+            return;
+        }
+        self.ui_font_size_px = size_px;
+        self.expanded_section = None;
+        crate::font_preferences::set_current_sizes(
+            cx,
+            self.ui_font_size_px,
+            self.editor_font_size_px,
+        );
+        ui_scale::apply_to_window(window, self.ui_scale_percent);
+        self.persist_font_sizes(cx);
+        self.update_main_windows(cx, move |view, root_window, cx| {
+            ui_scale::apply_to_window(root_window, view.ui_scale_percent);
+            view.notify_font_preferences_changed(cx);
+        });
+        cx.notify();
+    }
+
+    fn set_editor_font_size(&mut self, size_px: u16, cx: &mut gpui::Context<Self>) {
+        let size_px = session::normalize_editor_font_size_px(Some(size_px));
+        if self.editor_font_size_px == size_px {
+            return;
+        }
+        self.editor_font_size_px = size_px;
+        self.expanded_section = None;
+        crate::font_preferences::set_current_sizes(
+            cx,
+            self.ui_font_size_px,
+            self.editor_font_size_px,
+        );
+        self.persist_font_sizes(cx);
+        self.update_main_windows(cx, move |view, _window, cx| {
+            view.notify_font_preferences_changed(cx);
+        });
+        cx.notify();
+    }
+
+    fn persist_font_sizes(&self, cx: &mut gpui::Context<Self>) {
+        let ui_font_size_px = self.ui_font_size_px;
+        let editor_font_size_px = self.editor_font_size_px;
+        cx.background_spawn(async move {
+            let _ = session::persist_font_sizes(ui_font_size_px, editor_font_size_px);
+        })
+        .detach();
+    }
+
     fn set_use_font_ligatures(&mut self, enabled: bool, cx: &mut gpui::Context<Self>) {
         if self.use_font_ligatures == enabled {
             return;
@@ -2086,6 +2164,22 @@ impl SettingsWindowView {
         self.persist_preferences(cx);
         self.update_main_windows(cx, move |view, _window, cx| {
             view.set_history_graph_style(style, cx);
+        });
+        cx.notify();
+    }
+
+    fn set_workspace_layout(
+        &mut self,
+        layout: session::WorkspaceLayoutPreset,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.workspace_layout == layout {
+            return;
+        }
+        self.workspace_layout = layout;
+        self.persist_preferences(cx);
+        self.update_main_windows(cx, move |view, _window, cx| {
+            view.set_workspace_layout(layout, cx);
         });
         cx.notify();
     }
@@ -3671,6 +3765,18 @@ impl Render for SettingsWindowView {
                             this.toggle_section(SettingsSection::Theme, cx);
                         }));
 
+                    let workspace_layout_row = self
+                        .summary_row(
+                            "settings_window_workspace_layout",
+                            "Workspace layout",
+                            workspace_layout_label(self.workspace_layout).into(),
+                            self.expanded_section == Some(SettingsSection::WorkspaceLayout),
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
+                            this.toggle_section(SettingsSection::WorkspaceLayout, cx);
+                        }));
+
                     let date_format_row = self
                         .summary_row(
                             "settings_window_date_format",
@@ -3707,6 +3813,18 @@ impl Render for SettingsWindowView {
                             this.toggle_section(SettingsSection::UiFont, cx);
                         }));
 
+                    let ui_font_size_row = self
+                        .summary_row(
+                            "settings_window_ui_font_size",
+                            "UI font size",
+                            crate::font_preferences::font_size_label(self.ui_font_size_px).into(),
+                            self.expanded_section == Some(SettingsSection::UiFontSize),
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
+                            this.toggle_section(SettingsSection::UiFontSize, cx);
+                        }));
+
                     let editor_font_row = self
                         .summary_row(
                             "settings_window_editor_font",
@@ -3717,6 +3835,19 @@ impl Render for SettingsWindowView {
                         )
                         .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
                             this.toggle_section(SettingsSection::EditorFont, cx);
+                        }));
+
+                    let editor_font_size_row = self
+                        .summary_row(
+                            "settings_window_editor_font_size",
+                            "Diff/editor font size",
+                            crate::font_preferences::font_size_label(self.editor_font_size_px)
+                                .into(),
+                            self.expanded_section == Some(SettingsSection::EditorFontSize),
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
+                            this.toggle_section(SettingsSection::EditorFontSize, cx);
                         }));
 
                     let font_ligatures_row = self
@@ -4047,7 +4178,46 @@ impl Render for SettingsWindowView {
                             "Appearance",
                             theme,
                         ))
-                        .child(theme_row);
+                        .child(workspace_layout_row);
+
+                    if self.expanded_section == Some(SettingsSection::WorkspaceLayout) {
+                        let mut detail = self.detail_container(
+                            "settings_window_workspace_layout_options",
+                            theme,
+                        );
+                        for (layout, description) in [
+                            (
+                                session::WorkspaceLayoutPreset::SourceTreeReview,
+                                "History above; commit details and files left of the diff.",
+                            ),
+                            (
+                                session::WorkspaceLayoutPreset::WideReview,
+                                "History above; a wider diff comes first and details move right.",
+                            ),
+                            (
+                                session::WorkspaceLayoutPreset::Classic,
+                                "Original GitComet workspace with history inside the main pane.",
+                            ),
+                        ] {
+                            detail = detail.child(
+                                self.option_row(
+                                    format!("settings_window_workspace_layout_{layout:?}"),
+                                    workspace_layout_label(layout),
+                                    Some(description.into()),
+                                    self.workspace_layout == layout,
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _e: &ClickEvent, _window, cx| {
+                                        this.set_workspace_layout(layout, cx);
+                                    },
+                                )),
+                            );
+                        }
+                        general_card = general_card.child(detail);
+                    }
+
+                    general_card = general_card.child(theme_row);
 
                     if self.expanded_section == Some(SettingsSection::Theme) {
                         let theme_mode_count = settings_theme_modes().len();
@@ -4124,7 +4294,7 @@ impl Render for SettingsWindowView {
                             let detail_text = match percent {
                                 ui_scale::DEFAULT_UI_SCALE_PERCENT => Some("Default scale".into()),
                                 80 | 90 => Some("Fit more on screen".into()),
-                                110 | 125 | 150 => Some("Larger controls and text".into()),
+                                110 | 125 | 150 => Some("Larger controls and spacing".into()),
                                 _ => None,
                             };
                             detail = detail.child(
@@ -4203,6 +4373,31 @@ impl Render for SettingsWindowView {
                             ));
                     }
 
+                    general_card = general_card.child(ui_font_size_row);
+                    if self.expanded_section == Some(SettingsSection::UiFontSize) {
+                        let mut detail =
+                            self.detail_container("settings_window_ui_font_size_container", theme);
+                        for size_px in crate::font_preferences::UI_FONT_SIZE_PRESETS.iter().copied()
+                        {
+                            detail = detail.child(
+                                self.option_row(
+                                    format!("settings_window_ui_font_size_{size_px}"),
+                                    crate::font_preferences::font_size_label(size_px),
+                                    (size_px == session::DEFAULT_UI_FONT_SIZE_PX)
+                                        .then(|| "Default UI text size".into()),
+                                    self.ui_font_size_px == size_px,
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _e: &ClickEvent, window, cx| {
+                                        this.set_ui_font_size(size_px, window, cx);
+                                    },
+                                )),
+                            );
+                        }
+                        general_card = general_card.child(detail);
+                    }
+
                     general_card = general_card.child(editor_font_row);
                     if self.expanded_section == Some(SettingsSection::EditorFont) {
                         let list = if self.editor_font_options.is_empty() {
@@ -4252,6 +4447,33 @@ impl Render for SettingsWindowView {
                                 list,
                                 theme,
                             ));
+                    }
+
+                    general_card = general_card.child(editor_font_size_row);
+                    if self.expanded_section == Some(SettingsSection::EditorFontSize) {
+                        let mut detail = self
+                            .detail_container("settings_window_editor_font_size_container", theme);
+                        for size_px in crate::font_preferences::EDITOR_FONT_SIZE_PRESETS
+                            .iter()
+                            .copied()
+                        {
+                            detail = detail.child(
+                                self.option_row(
+                                    format!("settings_window_editor_font_size_{size_px}"),
+                                    crate::font_preferences::font_size_label(size_px),
+                                    (size_px == session::DEFAULT_EDITOR_FONT_SIZE_PX)
+                                        .then(|| "Default code size".into()),
+                                    self.editor_font_size_px == size_px,
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _e: &ClickEvent, _window, cx| {
+                                        this.set_editor_font_size(size_px, cx);
+                                    },
+                                )),
+                            );
+                        }
+                        general_card = general_card.child(detail);
                     }
 
                     general_card = general_card.child(font_ligatures_row);
@@ -5931,6 +6153,22 @@ mod tests {
         assert_eq!(history_highlight_strength_label(10), "Minimal (10%)");
         assert_eq!(history_highlight_strength_label(55), "Strong (55%)");
         assert_eq!(history_highlight_strength_label(75), "Custom (75%)");
+    }
+
+    #[test]
+    fn workspace_layout_labels_cover_all_persisted_presets() {
+        assert_eq!(
+            workspace_layout_label(session::WorkspaceLayoutPreset::SourceTreeReview),
+            "SourceTree review"
+        );
+        assert_eq!(
+            workspace_layout_label(session::WorkspaceLayoutPreset::WideReview),
+            "Wide diff review"
+        );
+        assert_eq!(
+            workspace_layout_label(session::WorkspaceLayoutPreset::Classic),
+            "Classic GitComet"
+        );
     }
 
     #[test]

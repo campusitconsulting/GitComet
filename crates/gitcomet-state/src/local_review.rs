@@ -401,6 +401,65 @@ pub fn persist_comment_for_workdir(
     Ok((path, store.revision))
 }
 
+/// Load one session from the shared sidecar without holding a writer lock.
+/// Atomic rename guarantees that readers see either the old or new document.
+pub fn load_session_for_workdir(
+    workdir: &Path,
+    session_id: &str,
+) -> io::Result<(PathBuf, u64, Option<LocalReviewSession>)> {
+    let common_dir = resolve_git_common_dir(workdir)?;
+    let path = review_store_path(&common_dir);
+    let store = load_from_path(&path)?;
+    let session = store
+        .sessions
+        .into_iter()
+        .find(|session| session.id == session_id);
+    Ok((path, store.revision, session))
+}
+
+/// Resolve or reopen one comment under the same writer lock used by comment
+/// creation and the CLI. Re-reading after lock acquisition prevents an older UI
+/// snapshot from overwriting comments written by an external agent.
+pub fn set_comment_status_for_workdir(
+    workdir: &Path,
+    session_id: &str,
+    comment_id: &str,
+    status: ReviewStatus,
+    updated_at_unix_ms: i64,
+) -> io::Result<(PathBuf, u64)> {
+    let common_dir = resolve_git_common_dir(workdir)?;
+    let path = review_store_path(&common_dir);
+    let _lock = ReviewWriterLock::acquire(&path)?;
+    let mut store = load_from_path(&path)?;
+    let Some(comment) = store
+        .sessions
+        .iter()
+        .find(|session| session.id == session_id)
+        .and_then(|session| {
+            session
+                .comments
+                .iter()
+                .find(|comment| comment.id == comment_id)
+        })
+    else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("local review comment '{session_id}/{comment_id}' was not found"),
+        ));
+    };
+    if comment.status == status {
+        return Ok((path, store.revision));
+    }
+    if !store.set_comment_status(session_id, comment_id, status, updated_at_unix_ms) {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("local review comment '{session_id}/{comment_id}' was not found"),
+        ));
+    }
+    persist_to_path(&path, &store)?;
+    Ok((path, store.revision))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,5 +629,37 @@ mod tests {
         .expect("persist submodule comment");
         assert_eq!(path, canonical_admin.join("gitcomet/reviews-v1.json"));
         assert_eq!(revision, 2);
+    }
+
+    #[test]
+    fn load_and_resolve_thread_re_read_the_shared_store() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".git")).expect("git dir");
+        persist_comment_for_workdir(dir.path(), session("ab-session"), comment("thread-1"))
+            .expect("persist comment");
+
+        let (_, before_revision, loaded) =
+            load_session_for_workdir(dir.path(), "ab-session").expect("load session");
+        assert_eq!(
+            loaded.as_ref().unwrap().comments[0].status,
+            ReviewStatus::Open
+        );
+
+        let (_, resolved_revision) = set_comment_status_for_workdir(
+            dir.path(),
+            "ab-session",
+            "thread-1",
+            ReviewStatus::Resolved,
+            99,
+        )
+        .expect("resolve");
+        assert!(resolved_revision > before_revision);
+        let (_, _, loaded) =
+            load_session_for_workdir(dir.path(), "ab-session").expect("reload session");
+        assert_eq!(
+            loaded.as_ref().unwrap().comments[0].status,
+            ReviewStatus::Resolved
+        );
+        assert_eq!(loaded.as_ref().unwrap().comments[0].updated_at_unix_ms, 99);
     }
 }

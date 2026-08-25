@@ -577,6 +577,11 @@ pub(in crate::view) fn next_pane_resize_drag_width(
         .min(max_width)
 }
 
+#[inline]
+pub(in crate::view) fn details_resize_drag_sign(details_on_left: bool) -> f32 {
+    if details_on_left { 1.0 } else { -1.0 }
+}
+
 /// Pure helper: compute the next diff-split ratio for a single drag step.
 ///
 /// Returns `None` when the available width is too narrow for two columns
@@ -1354,6 +1359,7 @@ impl GitCometView {
         let ui_scale = ui_scale::current_or_initialize_from_session(&ui_session, cx);
         let _font_preferences =
             crate::font_preferences::current_or_initialize_from_session(window, &ui_session, cx);
+        ui_scale::apply_to_window(window, ui_scale.percent);
         if should_seed_initial_repository_from_session(
             view_mode,
             initial_path.as_deref(),
@@ -2625,6 +2631,21 @@ impl GitCometView {
         cx.notify();
     }
 
+    pub(in crate::view) fn set_workspace_layout(
+        &mut self,
+        layout: gitcomet_state::session::WorkspaceLayoutPreset,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.workspace_layout == layout {
+            return;
+        }
+        self.workspace_layout = layout;
+        self.review_split_resize = None;
+        self.pane_resize = None;
+        self.schedule_ui_settings_persist(cx);
+        cx.notify();
+    }
+
     pub(in crate::view) fn set_sidebar_show_worktree_badges(
         &mut self,
         show: bool,
@@ -3037,6 +3058,17 @@ impl GitCometView {
         handle: PaneResizeHandle,
         cx: &gpui::Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
+        self.pane_resize_handle_with_details_side(theme, id, handle, false, cx)
+    }
+
+    fn pane_resize_handle_with_details_side(
+        &self,
+        theme: AppTheme,
+        id: &'static str,
+        handle: PaneResizeHandle,
+        details_on_left: bool,
+        cx: &gpui::Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
         let collapsed = match handle {
             PaneResizeHandle::Sidebar => self.sidebar_collapsed,
             PaneResizeHandle::Details => self.details_collapsed,
@@ -3087,7 +3119,7 @@ impl GitCometView {
                             this.details_render_width = this.details_width;
                         }
                     }
-                    this.pane_resize = Some(PaneResizeState::new(
+                    let mut resize = PaneResizeState::new(
                         handle,
                         e.position.x,
                         this.sidebar_width,
@@ -3095,7 +3127,11 @@ impl GitCometView {
                         this.last_window_size.width,
                         this.sidebar_collapsed,
                         this.details_collapsed,
-                    ));
+                    );
+                    if handle == PaneResizeHandle::Details {
+                        resize.drag_delta_sign = details_resize_drag_sign(details_on_left);
+                    }
+                    this.pane_resize = Some(resize);
                     cx.notify();
                 }),
             )

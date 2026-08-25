@@ -1,7 +1,7 @@
 use super::*;
 #[cfg(test)]
 use gitcomet_state::model::ComparisonShelf;
-use gitcomet_state::model::{ComparisonMark, ComparisonSlot, NamedComparison};
+use gitcomet_state::model::{ComparisonEndpoint, ComparisonMark, ComparisonSlot, NamedComparison};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ComparisonShelfPresentation {
@@ -25,7 +25,16 @@ impl ComparisonShelfPresentation {
     }
 
     fn can_open(&self) -> bool {
-        matches!((&self.a, &self.b), (Some(a), Some(b)) if a.commit_id != b.commit_id)
+        matches!((&self.a, &self.b), (Some(a), Some(b)) if a.endpoint != b.endpoint)
+    }
+
+    fn can_save(&self) -> bool {
+        matches!(
+            (&self.a, &self.b),
+            (Some(a), Some(b))
+                if matches!(&a.endpoint, ComparisonEndpoint::Commit(_))
+                    && matches!(&b.endpoint, ComparisonEndpoint::Commit(_))
+        )
     }
 
     fn automatic_name(&self) -> Option<String> {
@@ -43,7 +52,7 @@ fn endpoint_caption(slot: ComparisonSlot, endpoint: Option<&ComparisonMark>) -> 
     };
     match endpoint {
         Some(endpoint) => format!("{slot}: {}", endpoint.label),
-        None => format!("{slot}: choose a commit"),
+        None => format!("{slot}: choose an endpoint"),
     }
 }
 
@@ -64,7 +73,16 @@ impl GitCometView {
         let caption: SharedString = endpoint_caption(slot, endpoint.as_ref()).into();
         let full_caption = endpoint
             .as_ref()
-            .map(|endpoint| format!("{} ({})", endpoint.label, endpoint.commit_id.as_ref()))
+            .map(|endpoint| match &endpoint.endpoint {
+                ComparisonEndpoint::Commit(commit_id) => {
+                    format!("{} ({})", endpoint.label, commit_id.as_ref())
+                }
+                ComparisonEndpoint::WorktreeDirty { path } => format!(
+                    "{} (live worktree; captured when diff opens: {})",
+                    endpoint.label,
+                    path.display()
+                ),
+            })
             .unwrap_or_else(|| "Click to choose a branch, tag, worktree, or commit".to_string());
         let has_endpoint = endpoint.is_some();
         let label = div()
@@ -137,7 +155,7 @@ impl GitCometView {
         };
         let repo_id = presentation.repo_id;
         let can_open = presentation.can_open();
-        let can_save = can_open;
+        let can_save = presentation.can_save();
         let scale = ui_scale::UiScale::from_percent(self.ui_scale_percent);
 
         let mut bar = div()
@@ -204,12 +222,10 @@ impl GitCometView {
                                     let (Some(a), Some(b)) = (a.clone(), b.clone()) else {
                                         return;
                                     };
-                                    this.store.dispatch(Msg::CompareCommitRange {
+                                    this.store.dispatch(Msg::CompareComparisonEndpoints {
                                         repo_id,
-                                        from: a.commit_id,
-                                        to: b.commit_id,
-                                        from_label: a.label,
-                                        to_label: b.label,
+                                        a,
+                                        b,
                                     });
                                 }
                             }),
@@ -323,10 +339,7 @@ mod tests {
     use gitcomet_core::domain::RepoSpec;
 
     fn endpoint(id: &str, label: &str) -> ComparisonMark {
-        ComparisonMark {
-            commit_id: CommitId(id.to_string().into()),
-            label: label.to_string(),
-        }
+        ComparisonMark::commit(CommitId(id.to_string().into()), label)
     }
 
     fn repo_with_shelf(shelf: ComparisonShelf) -> RepoState {
@@ -358,6 +371,17 @@ mod tests {
             presentation.automatic_name().as_deref(),
             Some("main → feature")
         );
+        assert!(presentation.can_save());
+
+        presentation.b = Some(ComparisonMark::worktree_dirty(
+            "/tmp/agent-worktree".into(),
+            "agent working state",
+        ));
+        assert!(presentation.can_open());
+        assert!(
+            !presentation.can_save(),
+            "live worktree pairs are session-only"
+        );
     }
 
     #[test]
@@ -374,6 +398,7 @@ mod tests {
                     b,
                 }],
                 selected_name: Some("review".to_string()),
+                snapshot_request: 0,
             }));
 
         assert_eq!(presentation.named.len(), 1);
@@ -384,7 +409,7 @@ mod tests {
         );
         assert_eq!(
             endpoint_caption(ComparisonSlot::B, None),
-            "B: choose a commit"
+            "B: choose an endpoint"
         );
     }
 }

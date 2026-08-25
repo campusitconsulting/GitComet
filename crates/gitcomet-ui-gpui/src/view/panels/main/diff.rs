@@ -123,6 +123,9 @@ impl MainPaneView {
                         .id("diff_file_image_error_scroll")
                         .bg(theme.colors.surface.canvas)
                         .font_family(editor_font_family.clone())
+                        .text_size(px(
+                            crate::font_preferences::current_editor_font_size_px() as f32
+                        ))
                         .flex()
                         .flex_col()
                         .flex_1()
@@ -352,6 +355,9 @@ impl MainPaneView {
                             .id("diff_file_error_scroll")
                             .bg(theme.colors.surface.canvas)
                             .font_family(editor_font_family.clone())
+                            .text_size(px(
+                                crate::font_preferences::current_editor_font_size_px() as f32
+                            ))
                             .flex()
                             .flex_col()
                             .flex_1()
@@ -411,6 +417,9 @@ impl MainPaneView {
                             .id("diff_file_error_scroll")
                             .bg(theme.colors.surface.canvas)
                             .font_family(editor_font_family.clone())
+                            .text_size(px(
+                                crate::font_preferences::current_editor_font_size_px() as f32
+                            ))
                             .flex()
                             .flex_col()
                             .flex_1()
@@ -484,6 +493,10 @@ impl MainPaneView {
                                         .min_h(px(0.0))
                                         .bg(theme.colors.surface.canvas)
                                         .font_family(editor_font_family.clone())
+                                        .text_size(px(
+                                            crate::font_preferences::current_editor_font_size_px()
+                                                as f32,
+                                        ))
                                         .child(
                                             div()
                                                 .h_full()
@@ -781,6 +794,7 @@ impl MainPaneView {
                                         .flex_col()
                                         .bg(theme.colors.surface.canvas)
                                         .font_family(editor_font_family.clone())
+                                        .text_size(px(crate::font_preferences::current_editor_font_size_px() as f32))
                                         .child(columns_header)
                                         .child(
                                             div()

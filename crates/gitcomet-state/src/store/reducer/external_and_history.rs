@@ -91,15 +91,12 @@ pub(super) fn reload_repo(state: &mut AppState, repo_id: crate::model::RepoId) -
     repo_state.set_worktrees(Loadable::NotLoaded);
     repo_state.set_submodules(Loadable::NotLoaded);
     repo_state.clear_head_dependent_cached_state();
-    repo_state.set_selected_commit(None);
-    repo_state.set_commit_details(Loadable::NotLoaded);
-    // A reload can follow a reset or a dropped branch, which may have taken the
-    // marked commit with it. `set_selected_commit(None)` already dissolved the
-    // active comparison; the mark is the same kind of stale reference, and
-    // leaving it would keep offering a "Compare with …" that can only fail.
-    repo_state.comparison_mark = None;
-    repo_state.comparison_shelf.a = None;
-    repo_state.comparison_shelf.selected_name = None;
+    // Keep the review position while Git refreshes underneath it. Commit
+    // objects and commit-to-commit comparisons are immutable; clearing these
+    // eagerly made a harmless focus/monitor reload throw the user out of the
+    // exact review they were reading. If history really was rewritten, normal
+    // log/diff replies still report an unresolved endpoint instead of silently
+    // substituting a different commit.
     // A full reload may rewrite history (rebase/amend/branch switch underneath),
     // so back/forward snapshots can reference commits or file revisions that no
     // longer resolve. Start the navigation stacks fresh.
@@ -334,6 +331,26 @@ pub(super) fn set_history_scope(
         workdir,
         mode: scope,
         action: "updating history mode",
+    })
+}
+
+pub(super) fn set_history_order(
+    state: &mut AppState,
+    repo_id: crate::model::RepoId,
+    order: gitcomet_core::domain::HistoryOrder,
+) -> Vec<Effect> {
+    let Some(repo_ix) = state.repos.iter().position(|repo| repo.id == repo_id) else {
+        return Vec::new();
+    };
+    if state.repos[repo_ix].history_state.history_order == order {
+        return Vec::new();
+    }
+    state.repos[repo_ix].set_history_order(order);
+    restart_history_load(state, repo_ix, |workdir| Effect::PersistRepoHistoryOrder {
+        repo_id: Some(repo_id),
+        workdir,
+        order,
+        action: "updating history order",
     })
 }
 
@@ -713,6 +730,7 @@ pub(super) fn log_loaded(
                 repo_id,
                 seq,
                 scope: next.scope,
+                order: next.order,
                 author: next.author,
                 limit: next.limit,
                 cursor: next.cursor,

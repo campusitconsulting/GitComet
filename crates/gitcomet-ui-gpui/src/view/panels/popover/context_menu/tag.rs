@@ -79,7 +79,7 @@ fn comparison_mark_pair(repo: Option<&RepoState>) -> Option<(CommitId, String)> 
     repo.and_then(|r| {
         r.comparison_mark
             .as_ref()
-            .map(|mark| (mark.commit_id.clone(), mark.label.clone()))
+            .and_then(|mark| Some((mark.commit_id()?.clone(), mark.label.clone())))
     })
 }
 
@@ -130,10 +130,8 @@ fn tag_names_model(
 
     items.push(ContextMenuItem::Separator);
     // Comparison: mark this tag's commit, or compare it against a mark.
-    let endpoint = gitcomet_state::model::ComparisonMark {
-        commit_id: commit_id.clone(),
-        label: compare_label.clone(),
-    };
+    let endpoint =
+        gitcomet_state::model::ComparisonMark::commit(commit_id.clone(), compare_label.clone());
     for (slot, slot_label) in [
         (gitcomet_state::model::ComparisonSlot::A, "A"),
         (gitcomet_state::model::ComparisonSlot::B, "B"),

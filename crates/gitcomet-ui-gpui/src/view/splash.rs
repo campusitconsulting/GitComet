@@ -64,6 +64,10 @@ fn review_workspace_bounds_probe() -> gpui::Div {
     div().absolute().top_0().left_0().size_full()
 }
 
+fn review_details_on_left(layout: session::WorkspaceLayoutPreset) -> bool {
+    layout == session::WorkspaceLayoutPreset::SourceTreeReview
+}
+
 /// Corner radius of the main content card — squarer than the shared `panel`
 /// radius the floating dialogs and splash cards keep. This surface is chrome
 /// fused to the tab strip above it and the sidebar beside it, not a card
@@ -1369,29 +1373,75 @@ impl GitCometView {
                 min_lower,
                 cx,
             ))
-            .child(
+            .child({
+                let details_on_left = review_details_on_left(self.workspace_layout);
+                let divider = self.pane_resize_handle_with_details_side(
+                    theme,
+                    "review_details_resize",
+                    PaneResizeHandle::Details,
+                    details_on_left,
+                    cx,
+                );
+                let divider_offset = (self.details_render_width
+                    - self.pane_resize_handle_width() / 2.0)
+                    .max(px(0.0));
+                let regions = if details_on_left {
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .flex()
+                        .flex_row()
+                        .child(
+                            div()
+                                .h_full()
+                                .border_r_1()
+                                .border_color(theme.colors.stroke.subtle)
+                                .child(details_surface),
+                        )
+                        .child(main_surface)
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(divider_offset)
+                                .child(divider),
+                        )
+                        .into_any_element()
+                } else {
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .flex()
+                        .flex_row()
+                        .child(main_surface)
+                        .child(
+                            div()
+                                .h_full()
+                                .border_l_1()
+                                .border_color(theme.colors.stroke.subtle)
+                                .child(details_surface),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .right(divider_offset)
+                                .child(divider),
+                        )
+                        .into_any_element()
+                };
                 div()
                     .flex_1()
                     .min_h(px(0.0))
                     .flex()
                     .flex_col()
                     .child(self.comparison_shelf_bar(theme, cx))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h(px(0.0))
-                            .flex()
-                            .flex_row()
-                            .child(
-                                div()
-                                    .h_full()
-                                    .border_r_1()
-                                    .border_color(theme.colors.stroke.subtle)
-                                    .child(details_surface),
-                            )
-                            .child(main_surface),
-                    ),
-            )
+                    .child(regions)
+            })
             .into_any_element()
     }
 
@@ -1638,5 +1688,15 @@ mod review_split_tests {
         assert_eq!(review_split_percent_from_height(px(90.0), px(900.0)), 10);
         assert_eq!(review_split_percent_from_height(px(891.0), px(900.0)), 99);
         assert_eq!(review_split_percent_from_height(px(10.0), px(0.0)), 0);
+    }
+
+    #[test]
+    fn review_presets_reorder_details_without_changing_the_region_components() {
+        assert!(review_details_on_left(
+            session::WorkspaceLayoutPreset::SourceTreeReview
+        ));
+        assert!(!review_details_on_left(
+            session::WorkspaceLayoutPreset::WideReview
+        ));
     }
 }

@@ -238,6 +238,10 @@ pub(in crate::view) enum ContextMenuAction {
         repo_id: RepoId,
         scope: gitcomet_core::domain::LogScope,
     },
+    SetHistoryOrder {
+        repo_id: RepoId,
+        order: gitcomet_core::domain::HistoryOrder,
+    },
     SetDiffContentMode {
         mode: DiffContentMode,
     },

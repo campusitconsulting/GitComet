@@ -8,6 +8,7 @@ const REMOTE_SECTION: &str = "Remote branches";
 const TAG_SECTION: &str = "Tags";
 const REMOTE_TAG_SECTION: &str = "Remote tags";
 const WORKTREE_SECTION: &str = "Worktree HEADs";
+const DIRTY_WORKTREE_SECTION: &str = "Live worktree states";
 const COMMIT_SECTION: &str = "Loaded commits";
 
 pub(super) const LIST_MAX_HEIGHT_PX: f32 = 420.0;
@@ -61,7 +62,7 @@ fn push_endpoint(
     payloads.push(ComparisonEndpoint {
         repo_id,
         slot,
-        mark: ComparisonMark { commit_id, label },
+        mark: ComparisonMark::commit(commit_id, label),
     });
 }
 
@@ -201,6 +202,32 @@ fn rows(
                 head.clone(),
                 label,
             );
+
+            let is_dirty = matches!(&repo.worktree_dirty, Loadable::Ready(summaries)
+                if summaries.iter().any(|summary| summary.path == worktree.path));
+            if is_dirty {
+                let dirty_label = format!(
+                    "{} · working state",
+                    worktree.branch.as_deref().unwrap_or("detached")
+                );
+                items.push(
+                    components::PickerPromptItem::from_parts([
+                        components::PickerPromptItemPart::new(dirty_label.clone())
+                            .profile(components::TextTruncationProfile::End),
+                    ])
+                    .secondary_parts([components::PickerPromptItemPart::new(
+                        worktree.path.display().to_string(),
+                    )
+                    .profile(components::TextTruncationProfile::Path)])
+                    .section(DIRTY_WORKTREE_SECTION)
+                    .icon("icons/folder.svg"),
+                );
+                payloads.push(ComparisonEndpoint {
+                    repo_id: repo.id,
+                    slot,
+                    mark: ComparisonMark::worktree_dirty(worktree.path.clone(), dirty_label),
+                });
+            }
         }
     }
 
@@ -232,7 +259,7 @@ fn rows(
     let marked_index = selected.and_then(|selected| {
         payloads
             .iter()
-            .position(|endpoint| endpoint.mark.commit_id == selected.commit_id)
+            .position(|endpoint| endpoint.mark.endpoint == selected.endpoint)
     });
     (items, payloads, marked_index)
 }
@@ -261,16 +288,17 @@ fn rows_signature(this: &PopoverHost) -> u64 {
         repo.tags_rev.hash(hasher);
         repo.remote_tags_rev.hash(hasher);
         repo.worktrees_rev.hash(hasher);
+        repo.worktree_dirty_rev.hash(hasher);
         repo.log_rev.hash(hasher);
         repo.comparison_shelf
             .a
             .as_ref()
-            .map(|mark| &mark.commit_id)
+            .map(|mark| &mark.endpoint)
             .hash(hasher);
         repo.comparison_shelf
             .b
             .as_ref()
-            .map(|mark| &mark.commit_id)
+            .map(|mark| &mark.endpoint)
             .hash(hasher);
     })
 }
@@ -366,6 +394,7 @@ mod tests {
     use super::*;
     use gitcomet_core::domain::{
         Branch, Commit, CommitParentIds, LogPage, RemoteBranch, RemoteTag, RepoSpec, Tag, Worktree,
+        WorktreeDirtySummary,
     };
     use std::sync::Arc;
     use std::time::SystemTime;
@@ -408,6 +437,17 @@ mod tests {
             branch: Some("agent/one".into()),
             detached: false,
         }]));
+        repo.worktree_dirty = Loadable::Ready(Arc::new(vec![WorktreeDirtySummary {
+            path: "/tmp/picker-agent".into(),
+            head: Some(id("33333333cccccccc")),
+            branch: Some("agent/one".into()),
+            detached: false,
+            added: 0,
+            modified: 1,
+            deleted: 0,
+            staged: Vec::new(),
+            unstaged: Vec::new(),
+        }]));
         repo.log = Loadable::Ready(Arc::new(LogPage {
             commits: vec![Commit {
                 id: id("44444444dddddddd"),
@@ -420,7 +460,7 @@ mod tests {
         }));
 
         let (items, payloads, _) = rows(&repo, ComparisonSlot::B);
-        assert_eq!(items.len(), 6);
+        assert_eq!(items.len(), 7);
         assert_eq!(
             payloads
                 .iter()
@@ -432,6 +472,7 @@ mod tests {
                 "v1.0",
                 "origin/v1.1",
                 "agent/one @ picker-agent",
+                "agent/one · working state",
                 "44444444"
             ]
         );
@@ -443,14 +484,16 @@ mod tests {
         let full_sha_match = components::picker_prompt_layout(&items, "44444444dddddddd");
         assert_eq!(
             full_sha_match.item_indices,
-            vec![5],
+            vec![6],
             "pasting a full SHA must find a commit whose primary row shows only the short SHA"
         );
+        assert!(matches!(
+            &payloads[5].mark.endpoint,
+            gitcomet_state::model::ComparisonEndpoint::WorktreeDirty { path }
+                if path == std::path::Path::new("/tmp/picker-agent")
+        ));
 
-        repo.comparison_shelf.b = Some(ComparisonMark {
-            commit_id: id("11111111aaaaaaaa"),
-            label: "main".into(),
-        });
+        repo.comparison_shelf.b = Some(ComparisonMark::commit(id("11111111aaaaaaaa"), "main"));
         let (_, _, marked_index) = rows(&repo, ComparisonSlot::B);
         assert_eq!(
             marked_index,

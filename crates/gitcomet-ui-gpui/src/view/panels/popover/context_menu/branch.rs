@@ -123,10 +123,8 @@ pub(super) fn model(
     };
     if let Some(commit_id) = branch_commit_id {
         let comparison_mark = repo.and_then(|r| r.comparison_mark.clone());
-        let endpoint = gitcomet_state::model::ComparisonMark {
-            commit_id: commit_id.clone(),
-            label: name.clone(),
-        };
+        let endpoint =
+            gitcomet_state::model::ComparisonMark::commit(commit_id.clone(), name.clone());
         for (slot, slot_label) in [
             (gitcomet_state::model::ComparisonSlot::A, "A"),
             (gitcomet_state::model::ComparisonSlot::B, "B"),
@@ -165,7 +163,9 @@ pub(super) fn model(
                 label: name.clone(),
             }),
         });
-        if let Some(mark) = comparison_mark.filter(|mark| mark.commit_id != commit_id) {
+        if let Some(mark) = comparison_mark
+            .filter(|mark| mark.commit_id().is_some_and(|marked| marked != &commit_id))
+        {
             items.push(ContextMenuItem::Entry {
                 label: format!("Compare with {}", mark.label).into(),
                 icon: Some("icons/open_external.svg".into()),

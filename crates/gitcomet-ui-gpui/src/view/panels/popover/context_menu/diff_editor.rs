@@ -15,6 +15,7 @@ pub(super) fn model(
     copy_text: &Option<String>,
     copy_target: Option<(usize, DiffTextRegion)>,
     local_review_draft: Option<&crate::view::local_review_ui::LocalReviewCommentDraft>,
+    local_review_counts: Option<(usize, usize)>,
 ) -> ContextMenuModel {
     let title: SharedString = path
         .as_ref()
@@ -43,6 +44,18 @@ pub(super) fn model(
                 kind: PopoverKind::LocalReviewCommentPrompt {
                     draft: draft.clone(),
                 },
+            }),
+        });
+        items.push(ContextMenuItem::Separator);
+    }
+    if let Some((open, resolved)) = local_review_counts {
+        items.push(ContextMenuItem::Entry {
+            label: format!("Review threads ({open} open, {resolved} resolved)…").into(),
+            icon: Some("icons/comment.svg".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::OpenPopover {
+                kind: PopoverKind::LocalReviewThreads { repo_id },
             }),
         });
         items.push(ContextMenuItem::Separator);
@@ -214,6 +227,7 @@ mod tests {
             &None,
             None,
             Some(&draft),
+            Some((1, 2)),
         );
 
         assert!(menu.items.iter().any(|item| matches!(

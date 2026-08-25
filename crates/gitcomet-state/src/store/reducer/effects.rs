@@ -3,9 +3,10 @@ use super::util::{
     push_notification, selected_diff_load_plan,
 };
 use crate::model::{
-    AppNotificationKind, AppState, CommitMultiSelection, ComparisonMark, ComparisonSlot,
-    ConflictFileLoadMode, DiagnosticKind, ForeignDiffOrigin, Loadable, NamedComparison,
-    RangeSelection, RepoId, RepoLoadsInFlight, RepoState, SidebarDataRequest, SidebarMode,
+    AppNotificationKind, AppState, CommitMultiSelection, ComparisonEndpoint, ComparisonMark,
+    ComparisonSlot, ConflictFileLoadMode, DiagnosticKind, ForeignDiffOrigin, Loadable,
+    NamedComparison, RangeSelection, RepoId, RepoLoadsInFlight, RepoState, SidebarDataRequest,
+    SidebarMode,
 };
 use crate::msg::{CommitSelectMode, ConflictAutosolveMode, Effect};
 use gitcomet_core::conflict_session::{
@@ -1014,7 +1015,7 @@ pub(super) fn compare_range(
     to_label: String,
     source: ComparisonSource,
 ) -> Vec<Effect> {
-    let request = {
+    let (request, review_load) = {
         let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
             return Vec::new();
         };
@@ -1028,7 +1029,23 @@ pub(super) fn compare_range(
             to_label,
         }));
         repo_state.set_range_files(Loadable::Loading);
-        repo_state.begin_range_files_load()
+        let request = repo_state.begin_range_files_load();
+        let review_load = to.as_ref().and_then(|head| {
+            let a = repo_state.comparison_shelf.a.as_ref()?;
+            let b = repo_state.comparison_shelf.b.as_ref()?;
+            if a.commit_id() != Some(&from) || b.commit_id() != Some(head) {
+                return None;
+            }
+            let session_id = format!("ab:{}..{}", from.as_ref(), head.as_ref());
+            repo_state.local_review.session_id = Some(session_id.clone());
+            repo_state.local_review.session = Loadable::Loading;
+            repo_state.local_review.rev = repo_state.local_review.rev.wrapping_add(1);
+            Some((repo_state.spec.workdir.clone(), session_id))
+        });
+        if review_load.is_none() {
+            repo_state.local_review = crate::model::LocalReviewUiState::default();
+        }
+        (request, review_load)
     };
 
     let mut effects = super::diff_selection::select_diff(
@@ -1046,6 +1063,13 @@ pub(super) fn compare_range(
         to,
         request,
     });
+    if let Some((workdir, session_id)) = review_load {
+        effects.push(Effect::LoadLocalReviewSession {
+            repo_id,
+            workdir,
+            session_id,
+        });
+    }
     effects
 }
 
@@ -1059,6 +1083,7 @@ pub(super) fn clear_comparison(state: &mut AppState, repo_id: RepoId) -> Vec<Eff
         };
         repo_state.set_commit_multi_selection(CommitMultiSelection::default());
         repo_state.clear_range_comparison();
+        repo_state.local_review = crate::model::LocalReviewUiState::default();
         // Entering the comparison moved `selected_commit` without loading its
         // details, so the pane would otherwise fall back to whichever commit's
         // details happened to be loaded last.
@@ -1077,10 +1102,12 @@ pub(super) fn mark_for_comparison(
     let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
         return Vec::new();
     };
-    let endpoint = ComparisonMark { commit_id, label };
+    let endpoint = ComparisonMark::commit(commit_id, label);
     repo_state.comparison_mark = Some(endpoint.clone());
     repo_state.comparison_shelf.a = Some(endpoint);
     repo_state.comparison_shelf.selected_name = None;
+    repo_state.comparison_shelf.snapshot_request =
+        repo_state.comparison_shelf.snapshot_request.wrapping_add(1);
     vec![persist_comparison_shelf_effect(repo_id)]
 }
 
@@ -1091,6 +1118,8 @@ pub(super) fn clear_comparison_mark(state: &mut AppState, repo_id: RepoId) -> Ve
     repo_state.comparison_mark = None;
     repo_state.comparison_shelf.a = None;
     repo_state.comparison_shelf.selected_name = None;
+    repo_state.comparison_shelf.snapshot_request =
+        repo_state.comparison_shelf.snapshot_request.wrapping_add(1);
     vec![persist_comparison_shelf_effect(repo_id)]
 }
 
@@ -1111,6 +1140,8 @@ pub(super) fn set_comparison_slot(
         ComparisonSlot::B => repo_state.comparison_shelf.b = Some(endpoint),
     }
     repo_state.comparison_shelf.selected_name = None;
+    repo_state.comparison_shelf.snapshot_request =
+        repo_state.comparison_shelf.snapshot_request.wrapping_add(1);
     vec![persist_comparison_shelf_effect(repo_id)]
 }
 
@@ -1130,6 +1161,8 @@ pub(super) fn clear_comparison_slot(
         ComparisonSlot::B => repo_state.comparison_shelf.b = None,
     }
     repo_state.comparison_shelf.selected_name = None;
+    repo_state.comparison_shelf.snapshot_request =
+        repo_state.comparison_shelf.snapshot_request.wrapping_add(1);
     vec![persist_comparison_shelf_effect(repo_id)]
 }
 
@@ -1143,6 +1176,8 @@ pub(super) fn swap_comparison_slots(state: &mut AppState, repo_id: RepoId) -> Ve
     );
     repo_state.comparison_mark = repo_state.comparison_shelf.a.clone();
     repo_state.comparison_shelf.selected_name = None;
+    repo_state.comparison_shelf.snapshot_request =
+        repo_state.comparison_shelf.snapshot_request.wrapping_add(1);
     vec![persist_comparison_shelf_effect(repo_id)]
 }
 
@@ -1211,19 +1246,84 @@ pub(super) fn select_named_comparison(
         repo_state.comparison_shelf.b = Some(pair.b.clone());
         repo_state.comparison_shelf.selected_name = Some(pair.name.clone());
         repo_state.comparison_mark = Some(pair.a.clone());
+        repo_state.comparison_shelf.snapshot_request =
+            repo_state.comparison_shelf.snapshot_request.wrapping_add(1);
     }
 
-    let mut effects = compare_range(
-        state,
-        repo_id,
-        pair.a.commit_id,
-        Some(pair.b.commit_id),
-        pair.a.label,
-        pair.b.label,
-        ComparisonSource::Explicit,
-    );
+    let mut effects = compare_comparison_endpoints(state, repo_id, pair.a, pair.b);
     effects.push(persist_comparison_shelf_effect(repo_id));
     effects
+}
+
+pub(super) fn compare_comparison_endpoints(
+    state: &mut AppState,
+    repo_id: RepoId,
+    a: ComparisonMark,
+    b: ComparisonMark,
+) -> Vec<Effect> {
+    if a.endpoint == b.endpoint {
+        return Vec::new();
+    }
+    if let (ComparisonEndpoint::Commit(from), ComparisonEndpoint::Commit(to)) =
+        (&a.endpoint, &b.endpoint)
+    {
+        return compare_range(
+            state,
+            repo_id,
+            from.clone(),
+            Some(to.clone()),
+            a.label,
+            b.label,
+            ComparisonSource::Explicit,
+        );
+    }
+
+    let Some(repo_state) = state.repos.iter_mut().find(|repo| repo.id == repo_id) else {
+        return Vec::new();
+    };
+    repo_state.comparison_shelf.snapshot_request =
+        repo_state.comparison_shelf.snapshot_request.wrapping_add(1);
+    vec![Effect::SnapshotComparisonEndpoints {
+        repo_id,
+        request: repo_state.comparison_shelf.snapshot_request,
+        a,
+        b,
+    }]
+}
+
+pub(super) fn comparison_endpoints_snapshotted(
+    state: &mut AppState,
+    repo_id: RepoId,
+    request: u64,
+    a: ComparisonMark,
+    b: ComparisonMark,
+    result: std::result::Result<(CommitId, CommitId), Error>,
+) -> Vec<Effect> {
+    let Some(repo_state) = state.repos.iter_mut().find(|repo| repo.id == repo_id) else {
+        return Vec::new();
+    };
+    if repo_state.comparison_shelf.snapshot_request != request
+        || repo_state.comparison_shelf.a.as_ref() != Some(&a)
+        || repo_state.comparison_shelf.b.as_ref() != Some(&b)
+    {
+        return Vec::new();
+    }
+    let (from, to) = match result {
+        Ok(ids) => ids,
+        Err(error) => {
+            push_diagnostic(repo_state, DiagnosticKind::Error, error.to_string());
+            return Vec::new();
+        }
+    };
+    compare_range(
+        state,
+        repo_id,
+        from,
+        Some(to),
+        a.label,
+        b.label,
+        ComparisonSource::Explicit,
+    )
 }
 
 pub(super) fn remove_named_comparison(
@@ -1263,21 +1363,23 @@ pub(super) fn compare_with_marked(
             return Vec::new();
         };
         match &repo_state.comparison_mark {
-            Some(mark) if mark.commit_id != commit_id => mark.clone(),
+            Some(mark) if mark.commit_id().is_some_and(|marked| marked != &commit_id) => {
+                mark.clone()
+            }
             _ => return Vec::new(),
         }
     };
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
-        repo_state.comparison_shelf.b = Some(ComparisonMark {
-            commit_id: commit_id.clone(),
-            label: label.clone(),
-        });
+        repo_state.comparison_shelf.b =
+            Some(ComparisonMark::commit(commit_id.clone(), label.clone()));
         repo_state.comparison_shelf.selected_name = None;
     }
     compare_range(
         state,
         repo_id,
-        mark.commit_id,
+        mark.commit_id()
+            .cloned()
+            .expect("comparison mark was verified as a commit"),
         Some(commit_id),
         mark.label,
         label,

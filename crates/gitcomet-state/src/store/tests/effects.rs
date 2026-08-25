@@ -4611,6 +4611,7 @@ fn load_log_effect_uses_history_mode_api() {
             repo_id,
             seq: 1,
             scope: LogScope::NoMerges,
+            order: gitcomet_core::domain::HistoryOrder::Date,
             author: None,
             limit: 20,
             cursor: Some(cursor.clone()),
@@ -4992,6 +4993,7 @@ fn schedule_effect_dispatches_many_variants_with_repo_present() {
                 repo_id,
                 seq: 1,
                 scope: LogScope::CurrentBranch,
+                order: gitcomet_core::domain::HistoryOrder::Date,
                 author: None,
                 limit: 20,
                 cursor: None,
@@ -5003,6 +5005,7 @@ fn schedule_effect_dispatches_many_variants_with_repo_present() {
                 repo_id,
                 seq: 2,
                 scope: LogScope::AllBranches,
+                order: gitcomet_core::domain::HistoryOrder::Date,
                 author: None,
                 limit: 20,
                 cursor: Some(LogCursor {

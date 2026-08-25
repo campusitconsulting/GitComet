@@ -285,10 +285,8 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId, commit_id: &CommitId) -
         .iter()
         .find(|repo| repo.id == repo_id)
         .and_then(|repo| repo.comparison_mark.clone());
-    let endpoint = gitcomet_state::model::ComparisonMark {
-        commit_id: commit_id.clone(),
-        label: short.to_string(),
-    };
+    let endpoint =
+        gitcomet_state::model::ComparisonMark::commit(commit_id.clone(), short.to_string());
     items.push(ContextMenuItem::Entry {
         label: format!("Set {short} as comparison A").into(),
         icon: Some("icons/git_commit.svg".into()),
@@ -333,7 +331,9 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId, commit_id: &CommitId) -
             label: short.to_string(),
         }),
     });
-    if let Some(mark) = comparison_mark.filter(|mark| mark.commit_id != *commit_id) {
+    if let Some(mark) =
+        comparison_mark.filter(|mark| mark.commit_id().is_some_and(|marked| marked != commit_id))
+    {
         items.push(ContextMenuItem::Entry {
             label: format!("Compare with {}", mark.label).into(),
             icon: Some("icons/open_external.svg".into()),

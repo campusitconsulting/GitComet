@@ -2,7 +2,7 @@ use crate::model::{
     AppState, ComparisonMark, ComparisonShelf, DefaultTagType, GitLogTagFetchMode, NamedComparison,
     RepoId,
 };
-use gitcomet_core::domain::{CommitId, HistoryMode, LogScope};
+use gitcomet_core::domain::{CommitId, HistoryMode, HistoryOrder, LogScope};
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -78,6 +78,8 @@ pub struct UiSession {
     pub ui_scale_percent: Option<u32>,
     pub ui_font_family: Option<String>,
     pub editor_font_family: Option<String>,
+    pub ui_font_size_px: Option<u16>,
+    pub editor_font_size_px: Option<u16>,
     pub use_font_ligatures: Option<bool>,
     pub date_time_format: Option<String>,
     pub timezone: Option<String>,
@@ -172,6 +174,31 @@ enum HistoryModeSetting {
     AllBranches,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum HistoryOrderSetting {
+    Date,
+    Ancestor,
+}
+
+impl From<HistoryOrder> for HistoryOrderSetting {
+    fn from(value: HistoryOrder) -> Self {
+        match value {
+            HistoryOrder::Date => Self::Date,
+            HistoryOrder::Ancestor => Self::Ancestor,
+        }
+    }
+}
+
+impl From<HistoryOrderSetting> for HistoryOrder {
+    fn from(value: HistoryOrderSetting) -> Self {
+        match value {
+            HistoryOrderSetting::Date => Self::Date,
+            HistoryOrderSetting::Ancestor => Self::Ancestor,
+        }
+    }
+}
+
 impl From<HistoryMode> for HistoryModeSetting {
     fn from(value: HistoryMode) -> Self {
         match value {
@@ -226,6 +253,8 @@ struct UiSessionFile {
     ui_scale_percent: Option<u32>,
     ui_font_family: Option<String>,
     editor_font_family: Option<String>,
+    ui_font_size_px: Option<u16>,
+    editor_font_size_px: Option<u16>,
     use_font_ligatures: Option<bool>,
     date_time_format: Option<String>,
     timezone: Option<String>,
@@ -269,6 +298,7 @@ struct UiSessionFile {
     external_code_editor: Option<ExternalCodeEditorSettingFile>,
     repo_history_modes: Option<BTreeMap<String, HistoryModeSetting>>,
     repo_history_scopes: Option<BTreeMap<String, HistoryScopeSetting>>,
+    repo_history_orders: Option<BTreeMap<String, HistoryOrderSetting>>,
     repo_history_author_filters: Option<BTreeMap<String, Option<String>>>,
     repo_fetch_prune_deleted_remote_tracking_branches: Option<BTreeMap<String, bool>>,
     repo_comparison_shelves: Option<BTreeMap<String, ComparisonShelfFile>>,
@@ -381,6 +411,12 @@ pub fn load_from_path(path: &Path) -> UiSession {
         ui_scale_percent: file.ui_scale_percent,
         ui_font_family: file.ui_font_family,
         editor_font_family: file.editor_font_family,
+        ui_font_size_px: file
+            .ui_font_size_px
+            .map(|size| normalize_ui_font_size_px(Some(size))),
+        editor_font_size_px: file
+            .editor_font_size_px
+            .map(|size| normalize_editor_font_size_px(Some(size))),
         use_font_ligatures: file.use_font_ligatures,
         date_time_format: file.date_time_format,
         timezone: file.timezone,
@@ -433,6 +469,7 @@ pub(crate) struct RepoSessionPreferences {
     pub(crate) default_history_mode: Option<HistoryMode>,
     pub(crate) repo_history_modes: BTreeMap<String, HistoryMode>,
     pub(crate) repo_history_scopes: BTreeMap<String, LogScope>,
+    pub(crate) repo_history_orders: BTreeMap<String, HistoryOrder>,
     pub(crate) repo_history_author_filters: BTreeMap<String, Option<String>>,
     pub(crate) repo_fetch_prune_deleted_remote_tracking_branches: BTreeMap<String, bool>,
     pub(crate) repo_comparison_shelves: BTreeMap<String, ComparisonShelf>,
@@ -465,6 +502,12 @@ pub(crate) fn load_repo_session_preferences_from_path(
             .unwrap_or_default()
             .into_iter()
             .map(|(k, v)| (k, v.into()))
+            .collect(),
+        repo_history_orders: file
+            .repo_history_orders
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, value)| (key, value.into()))
             .collect(),
         repo_history_author_filters: file.repo_history_author_filters.unwrap_or_default(),
         repo_fetch_prune_deleted_remote_tracking_branches: file
@@ -637,7 +680,11 @@ pub fn persist_from_state_to_path(state: &AppState, path: &Path) -> io::Result<(
             if repo.comparison_shelf.named.is_empty() {
                 shelves.remove(&key);
             } else {
-                shelves.insert(key, comparison_shelf_to_file(&repo.comparison_shelf));
+                if let Some(shelf) = comparison_shelf_to_file(&repo.comparison_shelf) {
+                    shelves.insert(key, shelf);
+                } else {
+                    shelves.remove(&key);
+                }
             }
         }
         if shelves.is_empty() {
@@ -917,6 +964,44 @@ pub fn persist_ui_settings(settings: UiSettings) -> io::Result<()> {
         return Ok(());
     };
     persist_ui_settings_to_path(settings, &path)
+}
+
+pub const DEFAULT_UI_FONT_SIZE_PX: u16 = 16;
+pub const MIN_UI_FONT_SIZE_PX: u16 = 11;
+pub const MAX_UI_FONT_SIZE_PX: u16 = 24;
+pub const DEFAULT_EDITOR_FONT_SIZE_PX: u16 = 13;
+pub const MIN_EDITOR_FONT_SIZE_PX: u16 = 9;
+pub const MAX_EDITOR_FONT_SIZE_PX: u16 = 28;
+
+pub fn normalize_ui_font_size_px(size: Option<u16>) -> u16 {
+    size.unwrap_or(DEFAULT_UI_FONT_SIZE_PX)
+        .clamp(MIN_UI_FONT_SIZE_PX, MAX_UI_FONT_SIZE_PX)
+}
+
+pub fn normalize_editor_font_size_px(size: Option<u16>) -> u16 {
+    size.unwrap_or(DEFAULT_EDITOR_FONT_SIZE_PX)
+        .clamp(MIN_EDITOR_FONT_SIZE_PX, MAX_EDITOR_FONT_SIZE_PX)
+}
+
+pub fn persist_font_sizes(ui_font_size_px: u16, editor_font_size_px: u16) -> io::Result<()> {
+    let Some(path) = default_session_file_path() else {
+        return Ok(());
+    };
+    persist_font_sizes_to_path(ui_font_size_px, editor_font_size_px, &path)
+}
+
+pub fn persist_font_sizes_to_path(
+    ui_font_size_px: u16,
+    editor_font_size_px: u16,
+    path: &Path,
+) -> io::Result<()> {
+    with_session_file_persist_lock(|| {
+        let mut file = load_file(path).unwrap_or_default();
+        file.version = CURRENT_SESSION_FILE_VERSION;
+        file.ui_font_size_px = Some(normalize_ui_font_size_px(Some(ui_font_size_px)));
+        file.editor_font_size_px = Some(normalize_editor_font_size_px(Some(editor_font_size_px)));
+        persist_to_path(path, &file)
+    })
 }
 
 pub fn persist_ui_settings_to_path(settings: UiSettings, path: &Path) -> io::Result<()> {
@@ -1322,6 +1407,43 @@ pub fn persist_repo_history_scope_to_path(
     })
 }
 
+pub fn load_repo_history_order_from_path(
+    workdir: &Path,
+    session_file_path: &Path,
+) -> Option<HistoryOrder> {
+    let workdir_key = path_storage_key(workdir);
+    load_file(session_file_path)?
+        .repo_history_orders?
+        .get(&workdir_key)
+        .copied()
+        .map(Into::into)
+}
+
+pub fn persist_repo_history_order_to_path(
+    workdir: &Path,
+    order: HistoryOrder,
+    session_file_path: &Path,
+) -> io::Result<()> {
+    with_session_file_persist_lock(|| {
+        let mut file = load_file(session_file_path).unwrap_or_default();
+        let order = HistoryOrderSetting::from(order);
+        let workdir_key = path_storage_key(workdir);
+        if file
+            .repo_history_orders
+            .as_ref()
+            .and_then(|orders| orders.get(&workdir_key))
+            .is_some_and(|existing| *existing == order)
+        {
+            return Ok(());
+        }
+        file.version = CURRENT_SESSION_FILE_VERSION;
+        file.repo_history_orders
+            .get_or_insert_with(BTreeMap::new)
+            .insert(workdir_key, order);
+        persist_to_path(session_file_path, &file)
+    })
+}
+
 /// Persists the history author filter for `workdir`. `None` clears the stored
 /// filter; a `Some(Some(_))` stores the active author.
 pub fn persist_repo_history_author_filter_to_path(
@@ -1664,11 +1786,11 @@ fn external_code_editor_to_file(
     }
 }
 
-fn comparison_mark_to_file(mark: &ComparisonMark) -> ComparisonMarkFile {
-    ComparisonMarkFile {
-        commit_id: mark.commit_id.as_ref().to_string(),
+fn comparison_mark_to_file(mark: &ComparisonMark) -> Option<ComparisonMarkFile> {
+    Some(ComparisonMarkFile {
+        commit_id: mark.commit_id()?.as_ref().to_string(),
         label: mark.label.clone(),
-    }
+    })
 }
 
 fn comparison_mark_from_file(mark: ComparisonMarkFile) -> Option<ComparisonMark> {
@@ -1676,25 +1798,35 @@ fn comparison_mark_from_file(mark: ComparisonMarkFile) -> Option<ComparisonMark>
     if commit_id.is_empty() {
         return None;
     }
-    Some(ComparisonMark {
-        commit_id: CommitId(Arc::from(commit_id)),
-        label: mark.label,
-    })
+    Some(ComparisonMark::commit(
+        CommitId(Arc::from(commit_id)),
+        mark.label,
+    ))
 }
 
-fn comparison_shelf_to_file(shelf: &ComparisonShelf) -> ComparisonShelfFile {
-    ComparisonShelfFile {
-        named: shelf
-            .named
-            .iter()
-            .map(|pair| NamedComparisonFile {
+fn comparison_shelf_to_file(shelf: &ComparisonShelf) -> Option<ComparisonShelfFile> {
+    let named: Vec<_> = shelf
+        .named
+        .iter()
+        .filter_map(|pair| {
+            Some(NamedComparisonFile {
                 name: pair.name.clone(),
-                a: comparison_mark_to_file(&pair.a),
-                b: comparison_mark_to_file(&pair.b),
+                a: comparison_mark_to_file(&pair.a)?,
+                b: comparison_mark_to_file(&pair.b)?,
             })
-            .collect(),
-        selected_name: shelf.selected_name.clone(),
+        })
+        .collect();
+    if named.is_empty() {
+        return None;
     }
+    let selected_name = shelf
+        .selected_name
+        .clone()
+        .filter(|selected| named.iter().any(|pair| pair.name == *selected));
+    Some(ComparisonShelfFile {
+        named,
+        selected_name,
+    })
 }
 
 fn comparison_shelf_from_file(shelf: ComparisonShelfFile) -> Option<ComparisonShelf> {
@@ -1729,6 +1861,7 @@ fn comparison_shelf_from_file(shelf: ComparisonShelfFile) -> Option<ComparisonSh
         b: selected.map(|pair| pair.b.clone()),
         named,
         selected_name,
+        snapshot_request: 0,
     })
 }
 
@@ -2084,10 +2217,7 @@ mod tests {
     }
 
     fn comparison_mark(commit_id: &str, label: &str) -> ComparisonMark {
-        ComparisonMark {
-            commit_id: CommitId(Arc::from(commit_id)),
-            label: label.to_string(),
-        }
+        ComparisonMark::commit(CommitId(Arc::from(commit_id)), label)
     }
 
     fn state_with_named_comparison(
@@ -2197,6 +2327,37 @@ mod tests {
     }
 
     #[test]
+    fn live_worktree_comparisons_are_not_persisted() {
+        let dir = unique_session_test_dir("dirty-comparisons-session-only");
+        let session_file = dir.join("session.json");
+        let repo_path = dir.join("repo");
+        let mut state = AppState::default();
+        let mut repo = RepoState::new_opening(
+            RepoId(1),
+            RepoSpec {
+                workdir: repo_path.clone(),
+            },
+        );
+        repo.comparison_shelf.named.push(NamedComparison {
+            name: "agents".to_string(),
+            a: ComparisonMark::worktree_dirty(dir.join("agent-a"), "agent A"),
+            b: ComparisonMark::worktree_dirty(dir.join("agent-b"), "agent B"),
+        });
+        state.repos.push(repo);
+        state.active_repo = Some(RepoId(1));
+
+        persist_from_state_to_path(&state, &session_file).expect("persist session");
+        let loaded = load_repo_session_preferences_from_path(&session_file);
+        assert!(
+            !loaded
+                .repo_comparison_shelves
+                .contains_key(&path_storage_key(&repo_path))
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn review_workspace_settings_round_trip_and_clamp_split() {
         let dir = unique_session_test_dir("review-workspace-round-trip");
         let path = dir.join("session.json");
@@ -2217,6 +2378,20 @@ mod tests {
             Some(WorkspaceLayoutPreset::SourceTreeReview)
         );
         assert_eq!(loaded.review_split_percent, Some(MAX_REVIEW_SPLIT_PERCENT));
+    }
+
+    #[test]
+    fn independent_font_sizes_round_trip_and_clamp() {
+        let dir = unique_session_test_dir("font-sizes-round-trip");
+        let path = dir.join("session.json");
+
+        persist_font_sizes_to_path(1, u16::MAX, &path).expect("persist font sizes");
+
+        let loaded = load_from_path(&path);
+        assert_eq!(loaded.ui_font_size_px, Some(MIN_UI_FONT_SIZE_PX));
+        assert_eq!(loaded.editor_font_size_px, Some(MAX_EDITOR_FONT_SIZE_PX));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -4916,6 +5091,41 @@ mod tests {
 
         let loaded = load_repo_history_scope_from_path(&repo_a, &session_path);
         assert_eq!(loaded, Some(LogScope::AllBranches));
+    }
+
+    #[test]
+    fn persist_repo_history_order_round_trips_per_repository() {
+        let dir = env::temp_dir().join(format!(
+            "gitcomet-repo-history-order-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = fs::create_dir_all(&dir);
+        let session_path = dir.join("session.json");
+        let repo_a = dir.join("repo-a");
+        let repo_b = dir.join("repo-b");
+
+        persist_repo_history_order_to_path(&repo_a, HistoryOrder::Ancestor, &session_path)
+            .expect("persist ancestor order");
+
+        assert_eq!(
+            load_repo_history_order_from_path(&repo_a, &session_path),
+            Some(HistoryOrder::Ancestor)
+        );
+        assert_eq!(
+            load_repo_history_order_from_path(&repo_b, &session_path),
+            None
+        );
+        let preferences = load_repo_session_preferences_from_path(&session_path);
+        assert_eq!(
+            preferences
+                .repo_history_orders
+                .get(&path_storage_key(&repo_a)),
+            Some(&HistoryOrder::Ancestor)
+        );
     }
 
     #[test]

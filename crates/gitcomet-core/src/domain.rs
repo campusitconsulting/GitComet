@@ -80,6 +80,18 @@ pub enum HistoryMode {
     AllBranches,
 }
 
+/// Ordering used while walking commit history.
+///
+/// `Date` intentionally remains the default: it uses the lightweight paged
+/// commit-time walk. `Ancestor` pays for a topology-aware walk so a parent is
+/// never emitted before any reachable child, matching Git's `--topo-order`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub enum HistoryOrder {
+    #[default]
+    Date,
+    Ancestor,
+}
+
 impl HistoryMode {
     #[allow(non_upper_case_globals)]
     pub const CurrentBranch: Self = Self::FirstParent;

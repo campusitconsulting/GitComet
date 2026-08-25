@@ -634,7 +634,12 @@ fn new_log_paged_walk(
     repo: &gix::ThreadSafeRepository,
     tips: impl IntoIterator<Item = gix::ObjectId>,
     mode: HistoryMode,
+    order: gitcomet_core::domain::HistoryOrder,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<super::LogPagedWalkState> {
+    if let Some(cancellation) = cancellation {
+        cancellation.check_cancelled()?;
+    }
     // Without the commit-graph the traversal decodes every commit object just to
     // read its parents and date, and the page builder then decodes the same
     // objects again — two inflates per commit across the whole history on a
@@ -645,23 +650,68 @@ fn new_log_paged_walk(
         .commit_graph_if_enabled()
         .ok()
         .flatten();
-    let walk = gix::traverse::commit::Simple::filtered(
-        tips,
-        log_paged_walk_handle(repo),
-        log_paged_walk_filter(repo)?,
-    )
-    .sorting(gix::traverse::commit::simple::Sorting::ByCommitTime(
-        CommitTimeOrder::NewestFirst,
-    ))
-    .map_err(|e| Error::new(ErrorKind::Backend(format!("gix walk: {e}"))))?
-    // Set after the sorting, the way `rev_walk` does: first-parent mode walks the
-    // chain in order rather than by date, and asking for it swaps the queue.
-    .parents(if mode == HistoryMode::FirstParent {
+    let tips: Vec<_> = tips.into_iter().collect();
+    let parents = if mode == HistoryMode::FirstParent {
         gix::traverse::commit::Parents::First
     } else {
         gix::traverse::commit::Parents::All
-    })
-    .commit_graph(commit_graph);
+    };
+    // gix's topo builder eagerly follows recorded parents while computing
+    // indegrees. At a shallow boundary those parents intentionally do not
+    // exist locally, so topo construction cannot safely complete. Keep the
+    // history usable by falling back to the same boundary-aware Date walk.
+    let ancestor_requested =
+        order == gitcomet_core::domain::HistoryOrder::Ancestor && mode != HistoryMode::FirstParent;
+    let shallow = if ancestor_requested {
+        repo.to_thread_local()
+            .shallow_commits()
+            .map_err(|e| Error::new(ErrorKind::Backend(format!("gix shallow commits: {e}"))))?
+            .is_some()
+    } else {
+        false
+    };
+    let effective_order = if !ancestor_requested || shallow {
+        gitcomet_core::domain::HistoryOrder::Date
+    } else {
+        order
+    };
+    let walk = match effective_order {
+        gitcomet_core::domain::HistoryOrder::Date => {
+            let walk = gix::traverse::commit::Simple::filtered(
+                tips,
+                log_paged_walk_handle(repo),
+                log_paged_walk_filter(repo)?,
+            )
+            .sorting(gix::traverse::commit::simple::Sorting::ByCommitTime(
+                CommitTimeOrder::NewestFirst,
+            ))
+            .map_err(|e| Error::new(ErrorKind::Backend(format!("gix walk: {e}"))))?
+            .parents(parents)
+            .commit_graph(commit_graph);
+            super::LogPagedWalk::Date(walk)
+        }
+        gitcomet_core::domain::HistoryOrder::Ancestor => {
+            let walk = gix::traverse::commit::topo::Builder::from_iters(
+                log_paged_walk_handle(repo),
+                tips,
+                None::<std::iter::Empty<gix::ObjectId>>,
+            )
+            .with_predicate(log_paged_walk_filter(repo)?)
+            .sorting(gix::traverse::commit::topo::Sorting::TopoOrder)
+            .parents(parents)
+            .with_commit_graph(commit_graph)
+            .build()
+            .map_err(|e| Error::new(ErrorKind::Backend(format!("gix topo walk: {e}"))))?;
+            if let Some(cancellation) = cancellation {
+                // `build()` computes indegrees eagerly and has no fallible
+                // cancellation callback. Checking on both sides bounds the
+                // stale result lifetime even though the build itself cannot be
+                // interrupted inside gix yet.
+                cancellation.check_cancelled()?;
+            }
+            super::LogPagedWalk::Ancestor(walk)
+        }
+    };
     Ok(super::LogPagedWalkState {
         pending: std::collections::VecDeque::new(),
         walk,
@@ -1057,6 +1107,7 @@ fn log_page_from_paged_walk_state(
 impl GixRepo {
     fn log_head_page_cache_key(
         mode: HistoryMode,
+        order: gitcomet_core::domain::HistoryOrder,
         head_oid: Option<gix::ObjectId>,
         limit: usize,
         cursor: Option<&LogCursor>,
@@ -1064,6 +1115,7 @@ impl GixRepo {
     ) -> super::LogHeadPageCacheKey {
         super::LogHeadPageCacheKey {
             mode,
+            order,
             head_oid,
             limit,
             last_seen: cursor.map(|cursor| cursor.last_seen.clone()),
@@ -1148,6 +1200,7 @@ impl GixRepo {
         &self,
         token: &str,
         mode: HistoryMode,
+        order: gitcomet_core::domain::HistoryOrder,
         tips: &[gix::ObjectId],
         author: Option<&AuthorFilter>,
     ) -> Option<super::LogPagedWalkState> {
@@ -1158,6 +1211,7 @@ impl GixRepo {
         let index = cache.entries.iter().position(|entry| {
             entry.token.as_ref() == token
                 && entry.mode == mode
+                && entry.order == order
                 && entry.tips.as_ref() == tips
                 && entry.author.as_ref() == author
         })?;
@@ -1167,6 +1221,7 @@ impl GixRepo {
     fn store_log_paged_walk(
         &self,
         mode: HistoryMode,
+        order: gitcomet_core::domain::HistoryOrder,
         tips: &Arc<[gix::ObjectId]>,
         author: Option<&AuthorFilter>,
         state: super::LogPagedWalkState,
@@ -1183,6 +1238,7 @@ impl GixRepo {
         cache.entries.push(super::LogPagedWalkCacheEntry {
             token: Arc::clone(&token),
             mode,
+            order,
             tips: Arc::clone(tips),
             author: author.cloned(),
             state,
@@ -1391,7 +1447,15 @@ impl GixRepo {
         limit: usize,
         cursor: Option<&LogCursor>,
     ) -> Result<LogPage> {
-        self.log_history_mode_page_impl_inner(mode, None, limit, cursor, None, None)
+        self.log_history_mode_page_impl_inner(
+            mode,
+            gitcomet_core::domain::HistoryOrder::Date,
+            None,
+            limit,
+            cursor,
+            None,
+            None,
+        )
     }
 
     pub(super) fn log_history_mode_page_cancellable_impl(
@@ -1401,7 +1465,15 @@ impl GixRepo {
         cursor: Option<&LogCursor>,
         cancellation: &CancellationToken,
     ) -> Result<LogPage> {
-        self.log_history_mode_page_impl_inner(mode, None, limit, cursor, Some(cancellation), None)
+        self.log_history_mode_page_impl_inner(
+            mode,
+            gitcomet_core::domain::HistoryOrder::Date,
+            None,
+            limit,
+            cursor,
+            Some(cancellation),
+            None,
+        )
     }
 
     /// Filtered, cancellable, streaming variant: `on_chunk` sees the page as it
@@ -1420,6 +1492,29 @@ impl GixRepo {
         let mut chunks = ChunkEmitter::new(on_chunk);
         self.log_history_mode_page_impl_inner(
             mode,
+            gitcomet_core::domain::HistoryOrder::Date,
+            author,
+            limit,
+            cursor,
+            Some(cancellation),
+            Some(&mut chunks),
+        )
+    }
+
+    pub(super) fn log_history_mode_ordered_page_streaming_impl(
+        &self,
+        mode: HistoryMode,
+        order: gitcomet_core::domain::HistoryOrder,
+        author: Option<&str>,
+        limit: usize,
+        cursor: Option<&LogCursor>,
+        cancellation: &CancellationToken,
+        on_chunk: &mut dyn FnMut(LogChunk),
+    ) -> Result<LogPage> {
+        let mut chunks = ChunkEmitter::new(on_chunk);
+        self.log_history_mode_page_impl_inner(
+            mode,
+            order,
             author,
             limit,
             cursor,
@@ -1438,6 +1533,7 @@ impl GixRepo {
     fn log_paged_page(
         &self,
         mode: HistoryMode,
+        order: gitcomet_core::domain::HistoryOrder,
         tips: Arc<[gix::ObjectId]>,
         limit: usize,
         cursor: Option<&LogCursor>,
@@ -1451,7 +1547,7 @@ impl GixRepo {
 
         let cached_walk_state = cursor
             .and_then(|cursor| cursor.resume_token.as_deref())
-            .and_then(|token| self.take_log_paged_walk(token, mode, &tips, author));
+            .and_then(|token| self.take_log_paged_walk(token, mode, order, &tips, author));
 
         // Tokens go stale on cache eviction or a change of tips, and then the
         // walk has to be rebuilt. A first-parent cursor carries `resume_from`,
@@ -1466,11 +1562,12 @@ impl GixRepo {
             .and_then(object_id_from_commit_id);
         let (mut walk_state, mut cursor_gate) = match (cached_walk_state, resume_tip) {
             (Some(walk_state), _) => (walk_state, None),
-            (None, Some(resume_tip)) => {
-                (new_log_paged_walk(&self._repo, [resume_tip], mode)?, None)
-            }
+            (None, Some(resume_tip)) => (
+                new_log_paged_walk(&self._repo, [resume_tip], mode, order, cancellation)?,
+                None,
+            ),
             (None, None) => (
-                new_log_paged_walk(&self._repo, tips.iter().copied(), mode)?,
+                new_log_paged_walk(&self._repo, tips.iter().copied(), mode, order, cancellation)?,
                 cursor.map(|cursor| CursorGate::new(Some(cursor))),
             ),
         };
@@ -1492,7 +1589,9 @@ impl GixRepo {
             .map(|commit| LogCursor {
                 last_seen: commit.id.clone(),
                 resume_from: None,
-                resume_token: Some(self.store_log_paged_walk(mode, &tips, author, walk_state)),
+                resume_token: Some(
+                    self.store_log_paged_walk(mode, order, &tips, author, walk_state),
+                ),
             });
         let mut page = LogPage {
             commits,
@@ -1508,6 +1607,7 @@ impl GixRepo {
     fn log_history_mode_page_impl_inner(
         &self,
         mode: HistoryMode,
+        order: gitcomet_core::domain::HistoryOrder,
         author: Option<&str>,
         limit: usize,
         cursor: Option<&LogCursor>,
@@ -1528,6 +1628,7 @@ impl GixRepo {
 
         if mode == HistoryMode::AllBranches {
             return self.log_all_branches_page_impl_inner(
+                order,
                 limit,
                 cursor,
                 cancellation,
@@ -1538,7 +1639,7 @@ impl GixRepo {
 
         let repo = self._repo.to_thread_local();
         let head_id = gix_head_id_or_none(&repo)?;
-        let cache_key = Self::log_head_page_cache_key(mode, head_id, limit, cursor, author);
+        let cache_key = Self::log_head_page_cache_key(mode, order, head_id, limit, cursor, author);
         if let Some(page) = self.cached_log_head_page(&cache_key) {
             return Ok(page);
         }
@@ -1546,6 +1647,7 @@ impl GixRepo {
         let page = match head_id {
             Some(head_id) => self.log_paged_page(
                 mode,
+                order,
                 Arc::from(vec![head_id]),
                 limit,
                 cursor,
@@ -1568,7 +1670,14 @@ impl GixRepo {
         limit: usize,
         cursor: Option<&LogCursor>,
     ) -> Result<LogPage> {
-        self.log_all_branches_page_impl_inner(limit, cursor, None, None, None)
+        self.log_all_branches_page_impl_inner(
+            gitcomet_core::domain::HistoryOrder::Date,
+            limit,
+            cursor,
+            None,
+            None,
+            None,
+        )
     }
 
     pub(super) fn log_all_branches_page_cancellable_impl(
@@ -1577,11 +1686,19 @@ impl GixRepo {
         cursor: Option<&LogCursor>,
         cancellation: &CancellationToken,
     ) -> Result<LogPage> {
-        self.log_all_branches_page_impl_inner(limit, cursor, Some(cancellation), None, None)
+        self.log_all_branches_page_impl_inner(
+            gitcomet_core::domain::HistoryOrder::Date,
+            limit,
+            cursor,
+            Some(cancellation),
+            None,
+            None,
+        )
     }
 
     fn log_all_branches_page_impl_inner(
         &self,
+        order: gitcomet_core::domain::HistoryOrder,
         limit: usize,
         cursor: Option<&LogCursor>,
         cancellation: Option<&CancellationToken>,
@@ -1653,6 +1770,7 @@ impl GixRepo {
 
         self.log_paged_page(
             HistoryMode::AllBranches,
+            order,
             Arc::from(tips),
             limit,
             cursor,

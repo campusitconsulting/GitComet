@@ -23,6 +23,7 @@ mod force_delete_branch_confirm;
 mod force_push_confirm;
 mod force_remove_worktree_confirm;
 mod local_review_comment_prompt;
+mod local_review_threads;
 mod merge_abort_confirm;
 mod merge_commit_confirm;
 mod picker_nav;
@@ -845,6 +846,7 @@ pub(in super::super) fn popover_width_spec(kind: &PopoverKind) -> Option<Popover
         | PopoverKind::CreateTagPrompt { .. }
         | PopoverKind::SquashPrompt { .. } => Some(DIALOG_420_WIDTH),
         PopoverKind::LocalReviewCommentPrompt { .. } => Some(PopoverWidthSpec::fixed(480.0)),
+        PopoverKind::LocalReviewThreads { .. } => Some(PopoverWidthSpec::fixed(520.0)),
         PopoverKind::CreateBranchFromRefPrompt { .. }
         | PopoverKind::RenameBranchPrompt { .. }
         | PopoverKind::CheckoutRemoteBranchPrompt { .. } => Some(DIALOG_540_WIDTH),
@@ -2774,6 +2776,55 @@ impl PopoverHost {
         self.close_popover(cx);
     }
 
+    fn reload_local_review_session(&mut self, repo_id: RepoId) {
+        let Some(repo) = self.state.repos.iter().find(|repo| repo.id == repo_id) else {
+            return;
+        };
+        let Some(session_id) = repo.local_review.session_id.clone() else {
+            return;
+        };
+        self.store.dispatch(Msg::ReloadLocalReviewSession {
+            repo_id,
+            workdir: repo.spec.workdir.clone(),
+            session_id,
+        });
+    }
+
+    fn set_local_review_comment_status(
+        &mut self,
+        repo_id: RepoId,
+        comment_id: String,
+        status: gitcomet_state::local_review::ReviewStatus,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(repo) = self.state.repos.iter().find(|repo| repo.id == repo_id) else {
+            return;
+        };
+        let Some(session_id) = repo.local_review.session_id.clone() else {
+            return;
+        };
+        let Some(updated_at_unix_ms) = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        else {
+            self.push_toast(
+                components::ToastKind::Error,
+                "Could not create local review timestamp.".to_string(),
+                cx,
+            );
+            return;
+        };
+        self.store.dispatch(Msg::SetLocalReviewCommentStatus {
+            repo_id,
+            workdir: repo.spec.workdir.clone(),
+            session_id,
+            comment_id,
+            status,
+            updated_at_unix_ms,
+        });
+    }
+
     pub(super) fn can_submit_remote_add(&self, cx: &mut gpui::Context<Self>) -> bool {
         self.remote_name_input
             .read_with(cx, |i, _| !i.text().trim().is_empty())
@@ -4135,6 +4186,9 @@ impl PopoverHost {
             PopoverKind::StashPrompt => stash_prompt::panel(self, cx),
             PopoverKind::LocalReviewCommentPrompt { draft } => {
                 local_review_comment_prompt::panel(self, &draft, cx)
+            }
+            PopoverKind::LocalReviewThreads { repo_id } => {
+                local_review_threads::panel(self, repo_id, cx)
             }
             PopoverKind::CommitPrompt { repo_id } => commit_prompt::panel(self, repo_id, cx),
             PopoverKind::StashPickerPrompt { repo_id, purpose } => {

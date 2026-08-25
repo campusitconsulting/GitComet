@@ -79,12 +79,15 @@ Graph emphasis is independently configurable under `Settings > Git Log`:
   merge and stash commits; ordinary commits remain dots. The small symbols leave
   clear space inside the measured 11pt lane pitch.
 
-The UI family remains selectable under `Settings > General > UI Font`, and
-overall text/control sizing remains independently selectable under
-`Settings > General > UI scale`. `System Default` resolves to the native macOS
-UI family used by SourceTree. Thus SourceTree graph geometry, font family,
-font/control scale, highlight strength and special-node density can be combined
-without one preset overwriting the others.
+The UI family remains selectable under `Settings > General > UI Font`.
+`UI font size` is independently selectable from 11–24px, while
+`Diff/editor font size` is independently selectable from 9–28px and applies to
+unified/split diff, file editor, focused diff and conflict canvases. `UI scale`
+(80–200%) now controls geometry, spacing and controls rather than forcing the
+text size. `System Default` resolves to the native macOS UI family used by
+SourceTree. Graph geometry, font families, both font sizes, control scale,
+highlight strength and special-node density can therefore be combined without
+one preset overwriting the others.
 
 Validation:
 
@@ -162,32 +165,30 @@ Selecting `Open diff` loads both the changed-file list and the whole-range patch
 through the normal cancellable diff pipeline. Selecting a file then narrows the
 patch to that path.
 
-Worktree row menus now expose `Set worktree HEAD as comparison A/B` directly.
+Worktree row menus expose both `Set worktree HEAD as comparison A/B` and
+`Set worktree working state as comparison A/B` directly.
 The saved label contains both the branch and worktree directory name so two
 linked checkouts remain distinguishable. An unborn worktree has no commit
-endpoint and therefore does not offer these actions. This is deliberately a
-HEAD snapshot: the current endpoint model cannot represent the uncommitted
-state of two different worktrees at once. A commit-to-live-worktree comparison
-continues to use the existing dedicated path, whose live side is the active
-repository workdir.
+endpoint and therefore does not offer the HEAD action. A working-state endpoint
+captures staged, unstaged and non-ignored untracked files through a private
+temporary index and immutable Git tree; it does not checkout, stash, or mutate
+either worktree's real index. Consequently commit↔worktree and two different
+dirty worktree↔worktree comparisons are internally stable even while agents
+continue editing after the diff opens.
 
 Both A/B chips are direct, searchable endpoint pickers. They combine loaded
-local and remote branches, local and remote tags, worktree HEADs and history
-commits in one sectioned list; full OIDs and commit summaries are searchable.
+local and remote branches, local and remote tags, worktree HEADs, dirty
+worktree states and history commits in one sectioned list; full OIDs and commit
+summaries are searchable.
 Context-menu actions remain as a faster route when the desired object is
 already under the pointer.
 
-The remaining endpoint-model gap is explicit:
-
-- endpoints are resolved immutable commit IDs. Tracking a moving branch/ref or
-  either dirty worktree requires a richer endpoint enum and refresh-time
-  resolution, rather than overloading `ComparisonMark`.
-
 Named pairs are persisted per repository path in `session.json`. Selecting a
 saved pair restores A, B and the active comparison after restart while an
-unsaved draft A/B remains intentionally temporary. Session writes merge open
-repository shelves with stored closed-repository shelves instead of replacing
-the whole map.
+unsaved draft A/B remains intentionally temporary. Pairs containing live
+worktree endpoints are session-only because their unreferenced snapshot trees
+may be pruned by Git GC. Session writes merge open-repository shelves with
+stored closed-repository shelves instead of replacing the whole map.
 
 Submodule compatibility covers the full immutable A/B range. A changed gitlink in an arbitrary
 commit range is flagged in `diff_range_files` and its selected range patch shows
@@ -198,13 +199,24 @@ both nested commits exist locally. Missing objects remain an explicit
 `Submodule history is not available locally` state rather than a misleading
 empty range.
 
-## Next patches
+## Completion checkpoint (2026-08-25)
 
-1. Inline local-review markers, thread list, resolve UI and external sidecar
-   reload.
-2. Dirty-worktree endpoints for two different linked worktrees.
-3. Placement-aware file-tree/diff resize and replacement of the graph column's
-   enlarged safety bound with a maximum derived from the viewport.
+- SourceTree/Wide/Classic layout presets, vertical review split and directional
+  Details↔Diff resize are live and persisted.
+- Date Order remains the fast default; the persisted per-repository Ancestor
+  Order uses a topology-aware walk for dependency-first graph inspection.
+- Refresh preserves selected commit, A/B/named range and the top visible commit
+  plus its intra-row pixel offset; if that SHA disappeared after a rewrite the
+  existing numeric scroll position is retained.
+- Local review has inline/split markers, open/resolved thread list,
+  resolve/reopen, explicit external reload and the shared agent-safe CLI.
+- Dirty state from two linked worktrees can be captured and compared without
+  mutating either checkout or index.
+
+Deliberate follow-ups are narrower: re-anchor review comments by context hash,
+support review threads on dirty snapshots, make markers directly filter their
+line, and replace the graph column's conservative safety bound with a
+viewport-derived maximum.
 
 The v1 local JSON model and atomic storage contract are documented in
 [`local-review-protocol.md`](local-review-protocol.md). The CLI facade and first

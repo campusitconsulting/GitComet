@@ -138,8 +138,15 @@ the same v1 sidecar through the lock and atomic-write protocol above. A success
 or error notification reports the result; the CLI can read the new comment
 immediately from any linked worktree.
 
-This first UI slice intentionally supports immutable commit-to-commit A/B
-ranges only. Dirty-worktree endpoints, inline comment markers, a session/comment
-list, re-anchoring hashes, and live reload after another process writes the
-sidecar remain follow-up work. Until markers land, use `gitcomet review show
-<session-id>` to inspect saved comments.
+The current immutable commit-to-commit A/B session is loaded in a background
+effect when its range opens. Comment counts appear as `💬 N` markers on ordinary
+inline and split diff rows; the diff-line context menu opens **Review threads**,
+which lists open and resolved comments and can resolve or reopen each thread.
+The list also exposes **Reload** for comments written by a CLI or agent while
+the diff remains open. UI add/resolve writes reload automatically after their
+atomic write completes. Sidecar reads and writes never occur in a render path.
+
+Dirty-worktree endpoints, re-anchoring hashes, clickable marker filtering, and
+markers in the collapsed/context-expanded projection remain follow-up work.
+External writes use explicit Reload rather than a permanent filesystem watcher,
+avoiding another recursive watch or idle polling cost per open repository.

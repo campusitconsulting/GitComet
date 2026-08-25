@@ -206,7 +206,10 @@ fn effect_requires_available_git(effect: &Effect) -> bool {
             | Effect::PersistRecentRepo { .. }
             | Effect::PersistRepoHistoryMode { .. }
             | Effect::PersistRepoHistoryModesBatch { .. }
+            | Effect::PersistRepoHistoryOrder { .. }
             | Effect::PersistLocalReviewComment { .. }
+            | Effect::LoadLocalReviewSession { .. }
+            | Effect::SetLocalReviewCommentStatus { .. }
             | Effect::CancelRepoLoads { .. }
             | Effect::AbortCloneRepo { .. }
     )
@@ -247,8 +250,11 @@ fn send_unavailable_git_effect_result(
         | Effect::PersistRecentRepo { .. }
         | Effect::PersistRepoHistoryMode { .. }
         | Effect::PersistRepoHistoryModesBatch { .. }
+        | Effect::PersistRepoHistoryOrder { .. }
         | Effect::PersistRepoHistoryAuthorFilter { .. }
         | Effect::PersistLocalReviewComment { .. }
+        | Effect::LoadLocalReviewSession { .. }
+        | Effect::SetLocalReviewCommentStatus { .. }
         | Effect::CancelRepoLoads { .. } => {}
         Effect::OpenRepo { repo_id, path } => {
             send(Msg::Internal(crate::msg::InternalMsg::RepoOpenedErr {
@@ -507,6 +513,20 @@ fn send_unavailable_git_effect_result(
             request,
             result: Err(git_unavailable_error(runtime)),
         })),
+        Effect::SnapshotComparisonEndpoints {
+            repo_id,
+            request,
+            a,
+            b,
+        } => send(Msg::Internal(
+            crate::msg::InternalMsg::ComparisonEndpointsSnapshotted {
+                repo_id,
+                request,
+                a,
+                b,
+                result: Err(git_unavailable_error(runtime)),
+            },
+        )),
         Effect::LoadSquashMessagePreview {
             repo_id,
             oldest,
@@ -1388,6 +1408,53 @@ pub(super) fn schedule_effect(
                 );
             });
         }
+        Effect::LoadLocalReviewSession {
+            repo_id,
+            workdir,
+            session_id,
+        } => {
+            session_persist_executor.spawn(move || {
+                let result = crate::local_review::load_session_for_workdir(&workdir, &session_id)
+                    .map_err(|error| error.to_string());
+                util::send_or_log(
+                    &msg_tx,
+                    Msg::Internal(crate::msg::InternalMsg::LocalReviewSessionLoaded {
+                        repo_id,
+                        session_id,
+                        result,
+                    }),
+                );
+            });
+        }
+        Effect::SetLocalReviewCommentStatus {
+            repo_id,
+            workdir,
+            session_id,
+            comment_id,
+            status,
+            updated_at_unix_ms,
+        } => {
+            session_persist_executor.spawn(move || {
+                let result = crate::local_review::set_comment_status_for_workdir(
+                    &workdir,
+                    &session_id,
+                    &comment_id,
+                    status,
+                    updated_at_unix_ms,
+                )
+                .map_err(|error| error.to_string());
+                util::send_or_log(
+                    &msg_tx,
+                    Msg::Internal(crate::msg::InternalMsg::LocalReviewCommentStatusPersisted {
+                        repo_id,
+                        session_id,
+                        comment_id,
+                        status,
+                        result,
+                    }),
+                );
+            });
+        }
         Effect::PersistRecentRepo {
             repo_id,
             workdir,
@@ -1423,6 +1490,30 @@ pub(super) fn schedule_effect(
             session_persist_executor.spawn(move || {
                 if let Err(error) =
                     session::persist_repo_history_mode_to_path(&workdir, mode, &session_file_path)
+                {
+                    util::send_or_log(
+                        &msg_tx,
+                        Msg::Internal(crate::msg::InternalMsg::SessionPersistFailed {
+                            repo_id,
+                            action,
+                            error: error.to_string(),
+                        }),
+                    );
+                }
+            });
+        }
+        Effect::PersistRepoHistoryOrder {
+            repo_id,
+            workdir,
+            order,
+            action,
+        } => {
+            let Some(session_file_path) = session::default_session_file_path_for_effect() else {
+                return;
+            };
+            session_persist_executor.spawn(move || {
+                if let Err(error) =
+                    session::persist_repo_history_order_to_path(&workdir, order, &session_file_path)
                 {
                     util::send_or_log(
                         &msg_tx,
@@ -1627,6 +1718,7 @@ pub(super) fn schedule_effect(
             repo_id,
             seq,
             scope,
+            order,
             author,
             limit,
             cursor,
@@ -1641,6 +1733,7 @@ pub(super) fn schedule_effect(
                     repo_id,
                     seq,
                     scope,
+                    order,
                     author,
                     limit,
                     cursor,
@@ -1909,6 +2002,20 @@ pub(super) fn schedule_effect(
             {
                 repo_load::schedule_load_range_files(
                     executor, repos, msg_tx, repo_id, from, to, request,
+                );
+            }
+        }
+        Effect::SnapshotComparisonEndpoints {
+            repo_id,
+            request,
+            a,
+            b,
+        } => {
+            if let Some((msg_tx, _)) =
+                repo_load_context(thread_state, repo_task_tokens, msg_tx, repo_id)
+            {
+                repo_load::schedule_snapshot_comparison_endpoints(
+                    executor, repos, msg_tx, repo_id, request, a, b,
                 );
             }
         }

@@ -684,6 +684,7 @@ pub(super) fn refresh_primary_effects(repo_state: &mut RepoState) -> Vec<Effect>
 pub(super) fn first_page_log_request(repo_state: &RepoState) -> crate::model::PendingLogLoad {
     crate::model::PendingLogLoad {
         scope: repo_state.history_state.history_scope,
+        order: repo_state.history_state.history_order,
         author: repo_state.history_state.history_author_filter.clone(),
         limit: DEFAULT_LOG_PAGE_SIZE,
         cursor: None,
@@ -701,6 +702,7 @@ pub(super) fn request_log_effect(
     let seq = repo_state.loads_in_flight.request_log(load.clone())?;
     let crate::model::PendingLogLoad {
         scope,
+        order,
         author,
         limit,
         cursor,
@@ -709,6 +711,7 @@ pub(super) fn request_log_effect(
         repo_id,
         seq,
         scope,
+        order,
         author,
         limit,
         cursor,
@@ -735,6 +738,7 @@ pub(super) fn append_refresh_primary_effects(
             repo_id,
             seq,
             scope: log_request.scope,
+            order: log_request.order,
             author: log_request.author,
             limit: log_request.limit,
             cursor: log_request.cursor,
