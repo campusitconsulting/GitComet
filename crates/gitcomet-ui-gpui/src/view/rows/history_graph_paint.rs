@@ -11,6 +11,7 @@ pub(super) fn paint_history_graph(
     row_ix: usize,
     connect_from_top_col: Option<usize>,
     is_stash_node: bool,
+    node_style: gitcomet_state::session::HistoryGraphNodeStyle,
     // The lane the selected commit sits on. Every colour the graph draws goes
     // through `lane`, so that one lane stays saturated along its whole run and
     // every other lane recedes along its whole run -- a property of the lane, not
@@ -180,13 +181,26 @@ pub(super) fn paint_history_graph(
         size(node_layer_half * 2.0, node_layer_half * 2.0),
     );
     window.paint_layer(node_layer_bounds, |window| {
-        if is_stash_node {
+        if matches!(
+            node_style,
+            gitcomet_state::session::HistoryGraphNodeStyle::Dots
+        ) {
+            paint_commit_node(
+                bounds.left() + node_x,
+                y_center,
+                node_radius,
+                node_corner_radius,
+                node_color,
+                window,
+            );
+        } else if is_stash_node {
             paint_icon_node(
                 bounds.left() + node_x,
                 y_center,
                 icons::GIT_STASH_NODE_ICON_PATH,
                 row_background,
                 node_color,
+                node_style,
                 window,
                 cx,
             );
@@ -197,6 +211,7 @@ pub(super) fn paint_history_graph(
                 icons::GIT_MERGE_ICON_PATH,
                 row_background,
                 node_color,
+                node_style,
                 window,
                 cx,
             );
@@ -294,6 +309,8 @@ pub(in crate::view) struct SelectedLane {
     first_row: usize,
     /// Last such row, inclusive.
     last_row: usize,
+    /// Percentage mixed toward the theme's muted foreground for other lanes.
+    pub(in crate::view) wash_mix_percent: u8,
 }
 
 impl SelectedLane {
@@ -354,6 +371,7 @@ pub(in crate::view) fn selected_lane_at(
     graph_rows: &[history_graph::GraphRow],
     anchor_row: usize,
     color_ix: history_graph::LaneColorIx,
+    wash_mix_percent: u8,
 ) -> Option<SelectedLane> {
     let col = lane_col_for_color(graph_rows.get(anchor_row)?, color_ix)?;
     let occupies = |row_ix: usize| {
@@ -376,6 +394,7 @@ pub(in crate::view) fn selected_lane_at(
             color_ix,
             first_row: anchor_row,
             last_row: anchor_row,
+            wash_mix_percent: wash_mix_percent.min(100),
         });
     }
 
@@ -391,6 +410,7 @@ pub(in crate::view) fn selected_lane_at(
         color_ix,
         first_row,
         last_row,
+        wash_mix_percent: wash_mix_percent.min(100),
     })
 }
 
@@ -409,7 +429,12 @@ pub(super) fn lane_wash_color(
     match selected {
         // The same mix the unrelated-row dimming uses, so the two read alike.
         Some(selected) if !selected.covers(theme, row_ix, color_ix) => {
-            history_canvas::selection_related_lane_color(theme, full, Some(false))
+            history_canvas::selection_related_lane_color(
+                theme,
+                full,
+                Some(false),
+                selected.wash_mix_percent,
+            )
         }
         _ => full,
     }
@@ -812,13 +837,19 @@ pub(super) fn paint_icon_node(
     icon_path: &'static str,
     glyph_color: gpui::Rgba,
     disc_color: gpui::Rgba,
+    style: gitcomet_state::session::HistoryGraphNodeStyle,
     window: &mut Window,
     cx: &mut App,
 ) {
     let design_scale_factor = ui_scale::design_scale_factor_from_window(window);
     let scaled_px = |value| px(value * design_scale_factor);
-    let diameter = scaled_px(16.0);
-    let glyph = scaled_px(10.5);
+    let (diameter, glyph) = match style {
+        gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons => (16.0, 10.5),
+        gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons
+        | gitcomet_state::session::HistoryGraphNodeStyle::Dots => (9.0, 6.0),
+    };
+    let diameter = scaled_px(diameter);
+    let glyph = scaled_px(glyph);
 
     let disc = Bounds::new(
         point(x_center - diameter * 0.5, y_center - diameter * 0.5),
@@ -983,7 +1014,7 @@ mod band_tests {
         };
         let rows = [anchor, below(), below()];
 
-        let selected = selected_lane_at(&rows, 0, 7).expect("the lane resolves");
+        let selected = selected_lane_at(&rows, 0, 7, 75).expect("the lane resolves");
         assert_eq!(
             (selected.first_row, selected.last_row),
             (1, 2),
@@ -1164,6 +1195,7 @@ mod band_tests {
             color_ix,
             first_row: 0,
             last_row: usize::MAX,
+            wash_mix_percent: 75,
         }
     }
 
@@ -1198,7 +1230,8 @@ mod band_tests {
             history_canvas::selection_related_lane_color(
                 theme,
                 history_graph::lane_color(theme, other),
-                Some(false)
+                Some(false),
+                75,
             ),
             "reusing the row dimming's mix keeps the two reading alike"
         );
@@ -1249,6 +1282,7 @@ mod band_tests {
             color_ix,
             first_row: 10,
             last_row: 20,
+            wash_mix_percent: 75,
         };
 
         for row_ix in [9usize, 10, 15, 20] {
@@ -1290,6 +1324,7 @@ mod band_tests {
             color_ix: 0,
             first_row: 0,
             last_row: 10,
+            wash_mix_percent: 75,
         };
         assert_eq!(
             lane_wash_color(theme, 2, 5, Some(selected)),
@@ -1319,9 +1354,9 @@ mod band_tests {
             band(&[incoming(color_ix)], 0),
         ];
 
-        let top = selected_lane_at(&rows, 0, color_ix).expect("the anchor is on a lane");
+        let top = selected_lane_at(&rows, 0, color_ix, 75).expect("the anchor is on a lane");
         assert_eq!((top.first_row, top.last_row), (0, 1));
-        let bottom = selected_lane_at(&rows, 3, color_ix).expect("the anchor is on a lane");
+        let bottom = selected_lane_at(&rows, 3, color_ix, 75).expect("the anchor is on a lane");
         assert_eq!((bottom.first_row, bottom.last_row), (3, 3));
 
         let theme = AppTheme::gitcomet_dark();

@@ -407,6 +407,14 @@ fn normalize_editor_font_family_with_monospace_options(
 }
 
 fn default_ui_font_family(options: &[String]) -> String {
+    // SourceTree and the rest of native macOS use the system UI family. Keep
+    // bundled IBM Plex available as an explicit choice, but do not make a new
+    // downstream workspace look typographically foreign by default.
+    #[cfg(target_os = "macos")]
+    if options.iter().any(|option| option == UI_SYSTEM_FONT_FAMILY) {
+        return UI_SYSTEM_FONT_FAMILY.to_string();
+    }
+
     first_matching_font_family(options, DEFAULT_UI_FONT_CANDIDATES)
         .unwrap_or_else(|| UI_SYSTEM_FONT_FAMILY.to_string())
 }
@@ -539,6 +547,9 @@ mod tests {
 
     #[test]
     fn default_ui_font_family_prefers_platform_candidates() {
+        #[cfg(target_os = "macos")]
+        let expected = UI_SYSTEM_FONT_FAMILY;
+        #[cfg(not(target_os = "macos"))]
         let expected = DEFAULT_UI_FONT_CANDIDATES
             .first()
             .copied()
@@ -561,6 +572,9 @@ mod tests {
 
     #[test]
     fn normalize_ui_font_family_preserves_explicit_selection_and_falls_back_to_platform_default() {
+        #[cfg(target_os = "macos")]
+        let expected = UI_SYSTEM_FONT_FAMILY;
+        #[cfg(not(target_os = "macos"))]
         let expected = DEFAULT_UI_FONT_CANDIDATES
             .first()
             .copied()

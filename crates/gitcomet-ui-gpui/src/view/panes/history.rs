@@ -1019,6 +1019,8 @@ pub(in super::super) struct HistoryView {
     pub(in super::super) show_timezone: bool,
     pub(in super::super) history_relative_dates: bool,
     pub(in super::super) history_highlight_commit_chain: bool,
+    pub(in super::super) history_highlight_strength_percent: u8,
+    pub(in super::super) history_graph_node_style: gitcomet_state::session::HistoryGraphNodeStyle,
     _ui_model_subscription: gpui::Subscription,
     root_view: WeakEntity<GitCometView>,
     notify_fingerprint: u64,
@@ -1111,6 +1113,8 @@ impl HistoryView {
         show_timezone: bool,
         history_relative_dates: bool,
         history_highlight_commit_chain: bool,
+        history_highlight_strength_percent: u8,
+        history_graph_node_style: gitcomet_state::session::HistoryGraphNodeStyle,
         history_show_graph: bool,
         history_show_author: bool,
         history_show_date: bool,
@@ -1164,6 +1168,8 @@ impl HistoryView {
             show_timezone,
             history_relative_dates,
             history_highlight_commit_chain,
+            history_highlight_strength_percent,
+            history_graph_node_style,
             _ui_model_subscription: subscription,
             root_view,
             notify_fingerprint: initial_fingerprint,
@@ -1659,6 +1665,32 @@ impl HistoryView {
         cx.notify();
     }
 
+    pub(in super::super) fn set_history_highlight_strength_percent(
+        &mut self,
+        percent: u8,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let percent = percent.min(100);
+        if self.history_highlight_strength_percent == percent {
+            return;
+        }
+        self.history_highlight_strength_percent = percent;
+        self.history_selected_lane_color_cache = None;
+        cx.notify();
+    }
+
+    pub(in super::super) fn set_history_graph_node_style(
+        &mut self,
+        style: gitcomet_state::session::HistoryGraphNodeStyle,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.history_graph_node_style == style {
+            return;
+        }
+        self.history_graph_node_style = style;
+        cx.notify();
+    }
+
     pub(in super::super) fn set_history_relative_dates(
         &mut self,
         enabled: bool,
@@ -2078,6 +2110,7 @@ impl HistoryView {
                     &cache.base.graph_rows,
                     anchor_row,
                     color_ix,
+                    self.history_highlight_strength_percent,
                 )
             });
 

@@ -59,6 +59,20 @@ reference screenshot rather than estimated by eye:
 GitComet's semantic colours, selected-lane wash, merge/stash icons, branch
 selection and worktree nodes remain layered on top of this geometry.
 
+Graph emphasis is independently configurable under `Settings > Git Log`:
+
+- highlight strength: subtle 20%, balanced 35% (default), strong 55%, or the
+  former GitComet maximum 75%; the same value controls lane, node, message-border
+  and summary-text wash so a row never renders at contradictory strengths;
+- special commit nodes: dots only, compact 9pt icons (default), or the original
+  detailed 16pt GitComet icons. Compact icons fit inside the measured 11pt lane
+  pitch instead of overlapping adjacent lanes.
+
+The UI family remains selectable under `Settings > General > UI Font`.
+`System Default` resolves to the native macOS UI family used by SourceTree. A
+future graph-profile selector should compose geometry, density and these defaults
+without overriding an explicit font choice made by the user.
+
 Validation:
 
 ```sh

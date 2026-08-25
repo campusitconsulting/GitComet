@@ -1443,6 +1443,15 @@ impl GitCometView {
         let history_relative_dates = ui_session.history_relative_dates.unwrap_or(true);
         let history_highlight_commit_chain =
             ui_session.history_highlight_commit_chain.unwrap_or(true);
+        // The former 75% wash turned most of a busy graph grey. SourceTree-style
+        // focus defaults to a gentler separation while remaining configurable.
+        let history_highlight_strength_percent = ui_session
+            .history_highlight_strength_percent
+            .unwrap_or(35)
+            .min(100);
+        let history_graph_node_style = ui_session
+            .history_graph_node_style
+            .unwrap_or(gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons);
         let history_show_tags = ui_session.history_show_tags.unwrap_or(true);
         let history_tag_fetch_mode = ui_session.history_tag_fetch_mode.unwrap_or_default();
         let default_tag_type = ui_session.default_tag_type.unwrap_or_default();
@@ -1579,6 +1588,8 @@ impl GitCometView {
                 show_timezone,
                 history_relative_dates,
                 history_highlight_commit_chain,
+                history_highlight_strength_percent,
+                history_graph_node_style,
                 diff_scroll_sync,
                 diff_content_mode,
                 diff_whitespace_mode,
@@ -2574,6 +2585,29 @@ impl GitCometView {
         self.main_pane.update(cx, |pane, cx| {
             pane.set_history_highlight_commit_chain(enabled, cx);
         });
+        cx.notify();
+    }
+
+    pub(in crate::view) fn set_history_highlight_strength_percent(
+        &mut self,
+        percent: u8,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.main_pane.update(cx, |pane, cx| {
+            pane.set_history_highlight_strength_percent(percent, cx);
+        });
+        self.schedule_ui_settings_persist(cx);
+        cx.notify();
+    }
+
+    pub(in crate::view) fn set_history_graph_node_style(
+        &mut self,
+        style: gitcomet_state::session::HistoryGraphNodeStyle,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.main_pane
+            .update(cx, |pane, cx| pane.set_history_graph_node_style(style, cx));
+        self.schedule_ui_settings_persist(cx);
         cx.notify();
     }
 

@@ -168,6 +168,29 @@ const DIFF_VIEW_MODE_OPTIONS: &[(&str, DiffViewMode, &str)] = &[
     ),
 ];
 
+const HISTORY_HIGHLIGHT_STRENGTH_OPTIONS: &[(&str, u8, &str)] = &[
+    (
+        "settings_window_git_log_highlight_strength_subtle",
+        20,
+        "Keep other lanes clearly coloured.",
+    ),
+    (
+        "settings_window_git_log_highlight_strength_balanced",
+        35,
+        "Focus the selected lane without turning the graph grey.",
+    ),
+    (
+        "settings_window_git_log_highlight_strength_strong",
+        55,
+        "Make unrelated lanes noticeably quieter.",
+    ),
+    (
+        "settings_window_git_log_highlight_strength_maximum",
+        75,
+        "Match GitComet's former high-contrast highlight.",
+    ),
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SettingsSection {
     Theme,
@@ -185,6 +208,8 @@ enum SettingsSection {
     DiffViewMode,
     GitLogDefaultMode,
     GitLogColumns,
+    GitLogHighlightStrength,
+    GitLogNodeStyle,
     GitLogTagFetch,
 }
 
@@ -204,9 +229,11 @@ impl SettingsSection {
             Self::TerminalExternal | Self::TerminalActionBar => SettingsCategory::Terminal,
             Self::ChangeTracking => SettingsCategory::ChangeTracking,
             Self::DiffContentMode | Self::Diff | Self::DiffViewMode => SettingsCategory::Diff,
-            Self::GitLogDefaultMode | Self::GitLogColumns | Self::GitLogTagFetch => {
-                SettingsCategory::GitLog
-            }
+            Self::GitLogDefaultMode
+            | Self::GitLogColumns
+            | Self::GitLogHighlightStrength
+            | Self::GitLogNodeStyle
+            | Self::GitLogTagFetch => SettingsCategory::GitLog,
         }
     }
 }
@@ -305,7 +332,7 @@ impl SettingsCategory {
             }
             Self::GitLog => {
                 "git log default history mode history columns relative dates show tags graph \
-                 author sha"
+                 author sha highlight strength nodes dots compact icons merge stash"
             }
             Self::Tags => "tags automatically fetch tags",
             Self::GitExecutable => "git executable custom path system path version",
@@ -430,6 +457,8 @@ pub(crate) struct SettingsWindowView {
     history_show_sha: bool,
     history_relative_dates: bool,
     history_highlight_commit_chain: bool,
+    history_highlight_strength_percent: u8,
+    history_graph_node_style: gitcomet_state::session::HistoryGraphNodeStyle,
     history_show_tags: bool,
     history_tag_fetch_mode: GitLogTagFetchMode,
     default_history_mode: HistoryMode,
@@ -849,6 +878,13 @@ impl SettingsWindowView {
         let history_relative_dates = ui_session.history_relative_dates.unwrap_or(true);
         let history_highlight_commit_chain =
             ui_session.history_highlight_commit_chain.unwrap_or(true);
+        let history_highlight_strength_percent = ui_session
+            .history_highlight_strength_percent
+            .unwrap_or(35)
+            .min(100);
+        let history_graph_node_style = ui_session
+            .history_graph_node_style
+            .unwrap_or(gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons);
         let history_show_tags = ui_session.history_show_tags.unwrap_or(true);
         let history_tag_fetch_mode = ui_session.history_tag_fetch_mode.unwrap_or_default();
         let default_history_mode = ui_session.default_history_mode.unwrap_or_default();
@@ -1083,6 +1119,8 @@ impl SettingsWindowView {
             history_show_sha,
             history_relative_dates,
             history_highlight_commit_chain,
+            history_highlight_strength_percent,
+            history_graph_node_style,
             history_show_tags,
             history_tag_fetch_mode,
             default_history_mode,
@@ -1198,6 +1236,8 @@ impl SettingsWindowView {
             history_show_sha: Some(self.history_show_sha),
             history_relative_dates: Some(self.history_relative_dates),
             history_highlight_commit_chain: Some(self.history_highlight_commit_chain),
+            history_highlight_strength_percent: Some(self.history_highlight_strength_percent),
+            history_graph_node_style: Some(self.history_graph_node_style),
             history_show_tags: Some(self.history_show_tags),
             history_tag_fetch_mode: Some(self.history_tag_fetch_mode),
             default_history_mode: Some(self.default_history_mode),
@@ -1948,9 +1988,45 @@ impl SettingsWindowView {
             return;
         }
         self.history_highlight_commit_chain = enabled;
+        if !enabled && self.expanded_section == Some(SettingsSection::GitLogHighlightStrength) {
+            self.expanded_section = None;
+        }
         self.persist_preferences(cx);
         self.update_main_windows(cx, move |view, _window, cx| {
             view.set_history_highlight_commit_chain(enabled, cx);
+        });
+        cx.notify();
+    }
+
+    fn set_history_highlight_strength_percent(
+        &mut self,
+        percent: u8,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let percent = percent.min(100);
+        if self.history_highlight_strength_percent == percent {
+            return;
+        }
+        self.history_highlight_strength_percent = percent;
+        self.persist_preferences(cx);
+        self.update_main_windows(cx, move |view, _window, cx| {
+            view.set_history_highlight_strength_percent(percent, cx);
+        });
+        cx.notify();
+    }
+
+    fn set_history_graph_node_style(
+        &mut self,
+        style: gitcomet_state::session::HistoryGraphNodeStyle,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.history_graph_node_style == style {
+            return;
+        }
+        self.history_graph_node_style = style;
+        self.persist_preferences(cx);
+        self.update_main_windows(cx, move |view, _window, cx| {
+            view.set_history_graph_node_style(style, cx);
         });
         cx.notify();
     }
@@ -3786,6 +3862,50 @@ impl Render for SettingsWindowView {
                             );
                         }));
 
+                    let highlight_strength_label: SharedString = match self
+                        .history_highlight_strength_percent
+                    {
+                        0..=27 => "Subtle (20%)",
+                        28..=44 => "Balanced (35%)",
+                        45..=64 => "Strong (55%)",
+                        _ => "Maximum (75%)",
+                    }
+                    .into();
+                    let highlight_strength_row = self
+                        .summary_row(
+                            "settings_window_git_log_highlight_strength",
+                            "Highlight strength",
+                            highlight_strength_label,
+                            self.expanded_section
+                                == Some(SettingsSection::GitLogHighlightStrength),
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
+                            this.toggle_section(SettingsSection::GitLogHighlightStrength, cx);
+                        }));
+
+                    let node_style_label: SharedString = match self.history_graph_node_style {
+                        gitcomet_state::session::HistoryGraphNodeStyle::Dots => "Dots only",
+                        gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons => {
+                            "Compact icons"
+                        }
+                        gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons => {
+                            "Detailed icons"
+                        }
+                    }
+                    .into();
+                    let node_style_row = self
+                        .summary_row(
+                            "settings_window_git_log_node_style",
+                            "Special commit nodes",
+                            node_style_label,
+                            self.expanded_section == Some(SettingsSection::GitLogNodeStyle),
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
+                            this.toggle_section(SettingsSection::GitLogNodeStyle, cx);
+                        }));
+
                     let relative_dates_row = self
                         .toggle_row(
                             "settings_window_git_log_relative_dates",
@@ -4824,6 +4944,88 @@ impl Render for SettingsWindowView {
                     }
 
                     git_log_card = git_log_card.child(highlight_commit_chain_row);
+                    if self.history_highlight_commit_chain {
+                        git_log_card = git_log_card.child(highlight_strength_row);
+                        if self.expanded_section
+                            == Some(SettingsSection::GitLogHighlightStrength)
+                        {
+                            let mut strength_container = self.detail_container(
+                                "settings_window_git_log_highlight_strength_container",
+                                theme,
+                            );
+                            for (id, percent, description) in
+                                HISTORY_HIGHLIGHT_STRENGTH_OPTIONS.iter().copied()
+                            {
+                                let label: SharedString = match percent {
+                                    20 => "Subtle (20%)",
+                                    35 => "Balanced (35%)",
+                                    55 => "Strong (55%)",
+                                    _ => "Maximum (75%)",
+                                }
+                                .into();
+                                strength_container = strength_container.child(
+                                    self.option_row(
+                                        id,
+                                        label,
+                                        Some(description.into()),
+                                        self.history_highlight_strength_percent == percent,
+                                        theme,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _e: &ClickEvent, _window, cx| {
+                                            this.set_history_highlight_strength_percent(
+                                                percent, cx,
+                                            );
+                                        },
+                                    )),
+                                );
+                            }
+                            git_log_card = git_log_card.child(strength_container);
+                        }
+                    }
+                    git_log_card = git_log_card.child(node_style_row);
+                    if self.expanded_section == Some(SettingsSection::GitLogNodeStyle) {
+                        let mut node_container = self.detail_container(
+                            "settings_window_git_log_node_style_container",
+                            theme,
+                        );
+                        for (id, style, label, description) in [
+                            (
+                                "settings_window_git_log_node_style_dots",
+                                gitcomet_state::session::HistoryGraphNodeStyle::Dots,
+                                "Dots only",
+                                "Use the same compact dot for ordinary, merge and stash commits.",
+                            ),
+                            (
+                                "settings_window_git_log_node_style_compact",
+                                gitcomet_state::session::HistoryGraphNodeStyle::CompactIcons,
+                                "Compact icons",
+                                "Show merge and stash glyphs inside nodes that fit the 11pt lane pitch.",
+                            ),
+                            (
+                                "settings_window_git_log_node_style_detailed",
+                                gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons,
+                                "Detailed icons",
+                                "Use GitComet's original large 16pt semantic nodes.",
+                            ),
+                        ] {
+                            node_container = node_container.child(
+                                self.option_row(
+                                    id,
+                                    label,
+                                    Some(description.into()),
+                                    self.history_graph_node_style == style,
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _e: &ClickEvent, _window, cx| {
+                                        this.set_history_graph_node_style(style, cx);
+                                    },
+                                )),
+                            );
+                        }
+                        git_log_card = git_log_card.child(node_container);
+                    }
                     git_log_card = git_log_card.child(relative_dates_row);
                     git_log_card = git_log_card.child(show_history_tags_row);
                     if self.history_show_tags {

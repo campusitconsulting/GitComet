@@ -3342,7 +3342,11 @@ fn worktree_uncommitted_history_row(
     // Everything on the row washes with the lane it sits on, text included.
     let on_selected_lane =
         selected_lane.map(|selected| selected.covers(theme, visible_ix, band_node.color_ix));
-    let label_color = history_canvas::selection_related_summary_color(theme, on_selected_lane);
+    let label_color = history_canvas::selection_related_summary_color(
+        theme,
+        on_selected_lane,
+        selected_lane.map_or(0, |lane| lane.wash_mix_percent),
+    );
 
     // A pass-through band: whatever entered the commit below from above runs
     // straight through this row, so inserting it leaves the graph unbroken.
@@ -3569,7 +3573,11 @@ fn working_tree_summary_history_row(
     let node_color =
         super::history_graph_paint::lane_wash_color(theme, node_color_ix, 0, selected_lane);
     let on_selected_lane = selected_lane.map(|selected| selected.covers(theme, 0, node_color_ix));
-    let label_color = history_canvas::selection_related_summary_color(theme, on_selected_lane);
+    let label_color = history_canvas::selection_related_summary_color(
+        theme,
+        on_selected_lane,
+        selected_lane.map_or(0, |lane| lane.wash_mix_percent),
+    );
     let icon_count = |icon_path: &'static str, color: gpui::Rgba, count: usize| {
         div()
             .flex()

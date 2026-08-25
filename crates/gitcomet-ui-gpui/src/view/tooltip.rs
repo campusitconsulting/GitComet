@@ -160,6 +160,12 @@ impl GitCometView {
                             this.main_pane.read(cx).history_relative_dates(cx);
                         let history_highlight_commit_chain =
                             this.main_pane.read(cx).history_highlight_commit_chain(cx);
+                        let history_highlight_strength_percent = this
+                            .main_pane
+                            .read(cx)
+                            .history_highlight_strength_percent(cx);
+                        let history_graph_node_style =
+                            this.main_pane.read(cx).history_graph_node_style(cx);
                         let (
                             mergetool_auto_advance,
                             mergetool_collapse_unchanged,
@@ -231,6 +237,10 @@ impl GitCometView {
                             history_show_sha: Some(history_show_sha),
                             history_relative_dates: Some(history_relative_dates),
                             history_highlight_commit_chain: Some(history_highlight_commit_chain),
+                            history_highlight_strength_percent: Some(
+                                history_highlight_strength_percent,
+                            ),
+                            history_graph_node_style: Some(history_graph_node_style),
                             terminal_external_mode: None,
                             terminal_external_program: None,
                             terminal_external_args: None,
