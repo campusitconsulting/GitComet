@@ -979,6 +979,70 @@ mod tests {
         assert_eq!(graph[1].node_col, 0);
     }
 
+    /// Regression fixture distilled from `/Users/aatamano/Development/ERP`:
+    ///
+    /// `5cba589c` merges `8c2c21cc`, whose parent `d943dd9c` is separated from
+    /// it by a date-ordered run from another branch. The secondary-parent lane
+    /// must stay in one column through those interleaved rows; otherwise the
+    /// graph makes `8c2c21cc` look related to that other branch.
+    #[test]
+    fn erp_secondary_parent_lane_survives_interleaved_branch_until_its_parent() {
+        let theme = AppTheme::gitcomet_dark();
+        let commits = vec![
+            commit("709d1e95", vec!["5cba589c", "6b2305a6"]),
+            commit("6b2305a6", vec!["427c4578"]),
+            commit("427c4578", vec!["5cba589c"]),
+            commit("29068f3a", vec!["98c04720"]),
+            commit("98c04720", vec!["65a5337d"]),
+            commit("65a5337d", vec!["1dd797fc", "5cba589c"]),
+            commit("5cba589c", vec!["d519fc06", "8c2c21cc"]),
+            commit("8c2c21cc", vec!["d943dd9c"]),
+            commit("1dd797fc", vec!["2eb11864"]),
+            commit("2eb11864", vec!["e3600df4"]),
+            commit("e3600df4", vec!["7fda7853"]),
+            commit("7fda7853", vec!["87cede7f"]),
+            commit("87cede7f", vec!["c2994711"]),
+            commit("d943dd9c", vec!["droot"]),
+            commit("c2994711", vec!["proot"]),
+            commit("d519fc06", vec!["froot"]),
+            commit("droot", vec![]),
+            commit("proot", vec![]),
+            commit("froot", vec![]),
+        ];
+
+        let graph = compute_graph(&commits, theme, std::iter::empty::<&str>(), None);
+
+        let merge = &graph[6];
+        assert_eq!(merge.node_col, 0);
+        assert!(merge.lanes_next[1].is_active());
+        assert!(!merge.lanes_next[1].starts_at_node());
+        assert!(
+            merge
+                .edges_out
+                .iter()
+                .any(|edge| edge.from_col == 0 && edge.to_col == 1)
+        );
+
+        let secondary_parent = &graph[7];
+        assert_eq!(secondary_parent.node_col, 1);
+        assert!(secondary_parent.lanes_now[1].incoming());
+        assert!(secondary_parent.lanes_next[1].is_active());
+        assert!(!secondary_parent.lanes_next[1].starts_at_node());
+
+        // The unrelated payroll chain occupies another column. It must not
+        // take over, join, or restart the lane from 8c2c21cc to d943dd9c.
+        for row in &graph[8..13] {
+            assert!(row.lanes_now[1].incoming());
+            assert!(row.lanes_next[1].is_active());
+            assert!(!row.lanes_next[1].starts_at_node());
+            assert!(row.joins_in.iter().all(|edge| edge.from_col != 1));
+        }
+
+        let secondary_parent_parent = &graph[13];
+        assert_eq!(secondary_parent_parent.node_col, 1);
+        assert!(secondary_parent_parent.lanes_now[1].incoming());
+    }
+
     #[test]
     fn duplicate_branch_heads_do_not_create_extra_lanes() {
         let theme = AppTheme::gitcomet_dark();
