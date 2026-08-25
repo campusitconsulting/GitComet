@@ -1689,7 +1689,7 @@ impl SidebarPaneView {
                     );
                     let has_worktree = workspace_badge_path.is_some();
                     let has_active_workspace = active_workspace_path.is_some();
-                    let show_workspace_badge = has_worktree;
+                    let show_workspace_badge = has_worktree && this.show_worktree_badges;
                     let workspace_row_menu_invoker: Option<SharedString> =
                         workspace_badge_path.as_ref().map(|path| {
                             format!("worktree_menu_{}_{}", repo_id.0, path.display()).into()

@@ -4555,7 +4555,9 @@ fn clicking_a_file_with_unsaved_edits_opens_the_editor(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
-fn sidebar_worktree_badges_share_one_right_edge_near_the_pane_edge(cx: &mut gpui::TestAppContext) {
+fn sidebar_worktree_badges_align_and_can_be_hidden_without_hiding_worktrees(
+    cx: &mut gpui::TestAppContext,
+) {
     let _visual_guard = crate::test_support::lock_visual_test();
     let (store, events) = AppStore::new(Arc::new(TestBackend));
     let store_for_view = store.clone();
@@ -4625,6 +4627,30 @@ fn sidebar_worktree_badges_share_one_right_edge_near_the_pane_edge(cx: &mut gpui
     assert!(
         trailing_gap <= px(30.0),
         "worktree badges should sit close to the pane's right edge, got {trailing_gap:?}"
+    );
+
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this.set_sidebar_show_worktree_badges(false, cx);
+        });
+    });
+    test_support::redraw(cx);
+
+    for ix in 0..12usize {
+        let selector: &'static str =
+            Box::leak(format!("branch_workspace_badge_{ix}").into_boxed_str());
+        assert!(
+            cx.debug_bounds(selector).is_none(),
+            "disabled branch-row worktree badges must not render ({selector})"
+        );
+    }
+    let worktrees_section_is_visible = (0..24usize).any(|ix| {
+        let selector: &'static str = Box::leak(format!("worktrees_section_{ix}").into_boxed_str());
+        cx.debug_bounds(selector).is_some()
+    });
+    assert!(
+        worktrees_section_is_visible,
+        "the independent Worktrees section must remain available when branch-row badges are hidden"
     );
 }
 

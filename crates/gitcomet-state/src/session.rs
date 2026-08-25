@@ -66,6 +66,11 @@ pub struct UiSession {
     /// Percentage of the review workspace height assigned to history.
     pub review_split_percent: Option<u16>,
     pub sidebar_collapsed: Option<bool>,
+    /// Whether local-branch rows show the linked worktree that checks them out.
+    /// The standalone Worktrees section has its own per-repository collapse
+    /// state, so the two controls independently provide combined, separate, or
+    /// both views.
+    pub sidebar_show_worktree_badges: Option<bool>,
     pub theme_mode: Option<String>,
     pub ui_scale_percent: Option<u32>,
     pub ui_font_family: Option<String>,
@@ -213,6 +218,7 @@ struct UiSessionFile {
     workspace_layout: Option<WorkspaceLayoutPreset>,
     review_split_percent: Option<u16>,
     sidebar_collapsed: Option<bool>,
+    sidebar_show_worktree_badges: Option<bool>,
     theme_mode: Option<String>,
     ui_scale_percent: Option<u32>,
     ui_font_family: Option<String>,
@@ -345,6 +351,7 @@ pub fn load_from_path(path: &Path) -> UiSession {
             .review_split_percent
             .map(normalize_review_split_percent),
         sidebar_collapsed: file.sidebar_collapsed,
+        sidebar_show_worktree_badges: file.sidebar_show_worktree_badges,
         theme_mode: file.theme_mode,
         ui_scale_percent: file.ui_scale_percent,
         ui_font_family: file.ui_font_family,
@@ -791,6 +798,7 @@ pub struct UiSettings {
     pub workspace_layout: Option<WorkspaceLayoutPreset>,
     pub review_split_percent: Option<u16>,
     pub sidebar_collapsed: Option<bool>,
+    pub sidebar_show_worktree_badges: Option<bool>,
     pub repo_sidebar_collapsed_items: Option<BTreeMap<PathBuf, BTreeSet<String>>>,
     pub repo_sidebar_pinned_branches: Option<BTreeMap<PathBuf, BTreeSet<String>>>,
     pub theme_mode: Option<String>,
@@ -873,6 +881,9 @@ pub fn persist_ui_settings_to_path(settings: UiSettings, path: &Path) -> io::Res
         }
         if let Some(collapsed) = settings.sidebar_collapsed {
             file.sidebar_collapsed = Some(collapsed);
+        }
+        if let Some(show) = settings.sidebar_show_worktree_badges {
+            file.sidebar_show_worktree_badges = Some(show);
         }
         if let Some(items) = settings.repo_sidebar_collapsed_items {
             let items = path_keyed_string_sets_to_storage(items);
@@ -3126,6 +3137,53 @@ mod tests {
             load_from_path(&session_file).history_highlight_commit_chain,
             Some(true)
         );
+    }
+
+    #[test]
+    fn sidebar_worktree_badges_round_trip_and_default_to_unset() {
+        let dir = env::temp_dir().join(format!(
+            "gitcomet-sidebar-worktree-badges-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = fs::create_dir_all(&dir);
+        let session_file = dir.join("session.json");
+
+        assert_eq!(
+            load_from_path(&session_file).sidebar_show_worktree_badges,
+            None
+        );
+
+        persist_ui_settings_to_path(
+            UiSettings {
+                sidebar_show_worktree_badges: Some(false),
+                ..UiSettings::default()
+            },
+            &session_file,
+        )
+        .expect("persist worktree badge setting");
+        assert_eq!(
+            load_from_path(&session_file).sidebar_show_worktree_badges,
+            Some(false)
+        );
+
+        persist_ui_settings_to_path(
+            UiSettings {
+                sidebar_show_worktree_badges: Some(true),
+                ..UiSettings::default()
+            },
+            &session_file,
+        )
+        .expect("update worktree badge setting");
+        assert_eq!(
+            load_from_path(&session_file).sidebar_show_worktree_badges,
+            Some(true)
+        );
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

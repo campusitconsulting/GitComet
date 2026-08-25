@@ -364,7 +364,8 @@ impl SettingsCategory {
             }
             Self::GitLog => {
                 "git log default history mode history columns relative dates show tags graph \
-                 author sha highlight strength nodes dots compact icons merge stash"
+                 author sha highlight strength nodes dots compact icons merge stash worktree \
+                 badges branch rows sidebar"
             }
             Self::Tags => "tags automatically fetch tags",
             Self::GitExecutable => "git executable custom path system path version",
@@ -492,6 +493,7 @@ pub(crate) struct SettingsWindowView {
     history_highlight_strength_percent: u8,
     history_graph_node_style: gitcomet_state::session::HistoryGraphNodeStyle,
     history_graph_style: gitcomet_state::session::HistoryGraphStylePreset,
+    sidebar_show_worktree_badges: bool,
     history_show_tags: bool,
     history_tag_fetch_mode: GitLogTagFetchMode,
     default_history_mode: HistoryMode,
@@ -921,6 +923,7 @@ impl SettingsWindowView {
         let history_graph_style = ui_session
             .history_graph_style
             .unwrap_or(gitcomet_state::session::HistoryGraphStylePreset::SourceTree);
+        let sidebar_show_worktree_badges = ui_session.sidebar_show_worktree_badges.unwrap_or(true);
         let history_show_tags = ui_session.history_show_tags.unwrap_or(true);
         let history_tag_fetch_mode = ui_session.history_tag_fetch_mode.unwrap_or_default();
         let default_history_mode = ui_session.default_history_mode.unwrap_or_default();
@@ -1158,6 +1161,7 @@ impl SettingsWindowView {
             history_highlight_strength_percent,
             history_graph_node_style,
             history_graph_style,
+            sidebar_show_worktree_badges,
             history_show_tags,
             history_tag_fetch_mode,
             default_history_mode,
@@ -1236,6 +1240,7 @@ impl SettingsWindowView {
             workspace_layout: None,
             review_split_percent: None,
             sidebar_collapsed: None,
+            sidebar_show_worktree_badges: Some(self.sidebar_show_worktree_badges),
             repo_sidebar_collapsed_items: None,
             repo_sidebar_pinned_branches: None,
             theme_mode: Some(self.theme_mode.key().to_string()),
@@ -2081,6 +2086,19 @@ impl SettingsWindowView {
         self.persist_preferences(cx);
         self.update_main_windows(cx, move |view, _window, cx| {
             view.set_history_graph_style(style, cx);
+        });
+        cx.notify();
+    }
+
+    fn set_sidebar_show_worktree_badges(&mut self, enabled: bool, cx: &mut gpui::Context<Self>) {
+        if self.sidebar_show_worktree_badges == enabled {
+            return;
+        }
+
+        self.sidebar_show_worktree_badges = enabled;
+        self.persist_preferences(cx);
+        self.update_main_windows(cx, move |view, _window, cx| {
+            view.set_sidebar_show_worktree_badges(enabled, cx);
         });
         cx.notify();
     }
@@ -3977,6 +3995,20 @@ impl Render for SettingsWindowView {
                             this.set_history_relative_dates(!this.history_relative_dates, cx);
                         }));
 
+                    let worktree_badges_row = self
+                        .toggle_row(
+                            "settings_window_sidebar_show_worktree_badges",
+                            "Show worktrees on branch rows",
+                            self.sidebar_show_worktree_badges,
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
+                            this.set_sidebar_show_worktree_badges(
+                                !this.sidebar_show_worktree_badges,
+                                cx,
+                            );
+                        }));
+
                     let show_history_tags_row = self
                         .toggle_row(
                             "settings_window_git_log_show_tags",
@@ -5128,6 +5160,7 @@ impl Render for SettingsWindowView {
                         }
                         git_log_card = git_log_card.child(node_container);
                     }
+                    git_log_card = git_log_card.child(worktree_badges_row);
                     git_log_card = git_log_card.child(relative_dates_row);
                     git_log_card = git_log_card.child(show_history_tags_row);
                     if self.history_show_tags {

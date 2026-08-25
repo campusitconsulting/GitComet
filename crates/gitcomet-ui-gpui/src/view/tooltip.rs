@@ -182,6 +182,8 @@ impl GitCometView {
                             this.sidebar_pane.read(cx).saved_sidebar_collapsed_items();
                         let repo_sidebar_pinned_branches =
                             this.sidebar_pane.read(cx).saved_sidebar_pinned_branches();
+                        let sidebar_show_worktree_badges =
+                            this.sidebar_pane.read(cx).show_worktree_badges;
                         let font_preferences = crate::font_preferences::current(cx);
 
                         let settings = session::UiSettings {
@@ -196,6 +198,7 @@ impl GitCometView {
                             workspace_layout: Some(this.workspace_layout),
                             review_split_percent: Some(this.review_split_percent),
                             sidebar_collapsed: Some(this.sidebar_collapsed),
+                            sidebar_show_worktree_badges: Some(sidebar_show_worktree_badges),
                             repo_sidebar_collapsed_items: Some(repo_sidebar_collapsed_items),
                             repo_sidebar_pinned_branches: Some(repo_sidebar_pinned_branches),
                             theme_mode: Some(this.theme_mode.key().to_string()),

@@ -1449,6 +1449,7 @@ impl GitCometView {
         let history_graph_style = ui_session
             .history_graph_style
             .unwrap_or(gitcomet_state::session::HistoryGraphStylePreset::SourceTree);
+        let sidebar_show_worktree_badges = ui_session.sidebar_show_worktree_badges.unwrap_or(true);
         let history_show_tags = ui_session.history_show_tags.unwrap_or(true);
         let history_tag_fetch_mode = ui_session.history_tag_fetch_mode.unwrap_or_default();
         let default_tag_type = ui_session.default_tag_type.unwrap_or_default();
@@ -1570,6 +1571,7 @@ impl GitCometView {
                 initial_theme,
                 ui_session.repo_sidebar_collapsed_items.clone(),
                 ui_session.repo_sidebar_pinned_branches.clone(),
+                sidebar_show_worktree_badges,
                 weak_view.clone(),
                 tooltip_host.downgrade(),
                 cx,
@@ -2618,6 +2620,17 @@ impl GitCometView {
     ) {
         self.main_pane
             .update(cx, |pane, cx| pane.set_history_graph_style(style, cx));
+        self.schedule_ui_settings_persist(cx);
+        cx.notify();
+    }
+
+    pub(in crate::view) fn set_sidebar_show_worktree_badges(
+        &mut self,
+        show: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.sidebar_pane
+            .update(cx, |pane, cx| pane.set_show_worktree_badges(show, cx));
         self.schedule_ui_settings_persist(cx);
         cx.notify();
     }

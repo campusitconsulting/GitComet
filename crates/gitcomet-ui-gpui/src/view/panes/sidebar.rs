@@ -231,6 +231,10 @@ pub(in super::super) struct SidebarPaneView {
     path_display_cache: std::cell::RefCell<path_display::PathDisplayCache>,
     sidebar_collapsed_items_by_repo: BTreeMap<std::path::PathBuf, BTreeSet<String>>,
     sidebar_pinned_branches_by_repo: BTreeMap<std::path::PathBuf, BTreeSet<String>>,
+    /// Independent of the Worktrees section's collapse state. Keeping this on
+    /// renders a compact combined branch/worktree tree; turning it off leaves
+    /// worktrees only in their standalone section.
+    pub(in super::super) show_worktree_badges: bool,
     root_view: WeakEntity<GitCometView>,
     pub(in crate::view) tooltip_host: WeakEntity<TooltipHost>,
     notify_fingerprint: SidebarNotifyFingerprint,
@@ -308,6 +312,7 @@ impl SidebarPaneView {
         theme: AppTheme,
         sidebar_collapsed_items_by_repo: BTreeMap<std::path::PathBuf, BTreeSet<String>>,
         sidebar_pinned_branches_by_repo: BTreeMap<std::path::PathBuf, BTreeSet<String>>,
+        show_worktree_badges: bool,
         root_view: WeakEntity<GitCometView>,
         tooltip_host: WeakEntity<TooltipHost>,
         cx: &mut gpui::Context<Self>,
@@ -437,6 +442,7 @@ impl SidebarPaneView {
             path_display_cache: std::cell::RefCell::new(path_display::PathDisplayCache::default()),
             sidebar_collapsed_items_by_repo,
             sidebar_pinned_branches_by_repo,
+            show_worktree_badges,
             root_view,
             tooltip_host,
             notify_fingerprint: initial_fingerprint,
@@ -458,6 +464,18 @@ impl SidebarPaneView {
 
     pub(in super::super) fn set_theme(&mut self, theme: AppTheme, cx: &mut gpui::Context<Self>) {
         self.theme = theme;
+        cx.notify();
+    }
+
+    pub(in super::super) fn set_show_worktree_badges(
+        &mut self,
+        show: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.show_worktree_badges == show {
+            return;
+        }
+        self.show_worktree_badges = show;
         cx.notify();
     }
 
