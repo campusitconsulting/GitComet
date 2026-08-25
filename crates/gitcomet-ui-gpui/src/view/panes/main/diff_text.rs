@@ -1762,6 +1762,7 @@ impl MainPaneView {
         };
         let repo_id = repo.id;
         let workdir = repo.spec.workdir.clone();
+        let local_review_context = crate::view::local_review_ui::range_context(repo);
 
         let (area, allow_apply) = match repo.diff_state.diff_target.as_ref() {
             Some(DiffTarget::WorkingTree { area, .. }) => (*area, true),
@@ -1963,9 +1964,30 @@ impl MainPaneView {
             }
         };
 
-        let clicked_src_ix = src_ixs_for_visible_ix(clicked_visible_ix)
-            .into_iter()
-            .next();
+        let clicked_src_ixs = src_ixs_for_visible_ix(clicked_visible_ix);
+        let clicked_src_ix = match region {
+            DiffTextRegion::SplitLeft => clicked_src_ixs.iter().copied().find(|src_ix| {
+                self.patch_diff_row(*src_ix).is_some_and(|line| {
+                    line.old_line.is_some()
+                        && matches!(
+                            line.kind,
+                            gitcomet_core::domain::DiffLineKind::Remove
+                                | gitcomet_core::domain::DiffLineKind::Context
+                        )
+                })
+            }),
+            DiffTextRegion::SplitRight => clicked_src_ixs.iter().copied().find(|src_ix| {
+                self.patch_diff_row(*src_ix).is_some_and(|line| {
+                    line.new_line.is_some()
+                        && matches!(
+                            line.kind,
+                            gitcomet_core::domain::DiffLineKind::Add
+                                | gitcomet_core::domain::DiffLineKind::Context
+                        )
+                })
+            }),
+            DiffTextRegion::Inline => clicked_src_ixs.first().copied(),
+        };
         let hunk_src_ix = clicked_src_ix.and_then(|src_ix| self.diff_enclosing_hunk_src_ix(src_ix));
 
         let path = hunk_src_ix
@@ -1981,6 +2003,16 @@ impl MainPaneView {
                     rel.to_path_buf()
                 })
             });
+
+        let local_review_draft = path.clone().and_then(|path| {
+            let line = clicked_src_ix.and_then(|src_ix| self.patch_diff_row(src_ix))?;
+            crate::view::local_review_ui::draft_for_diff_line(
+                local_review_context.as_ref()?,
+                path,
+                &line,
+                region,
+            )
+        });
 
         let allow_patch_actions = allow_apply && !is_file_preview;
 
@@ -2089,6 +2121,7 @@ impl MainPaneView {
                 lines_count,
                 copy_text,
                 copy_target,
+                local_review_draft,
             },
             anchor,
             window,

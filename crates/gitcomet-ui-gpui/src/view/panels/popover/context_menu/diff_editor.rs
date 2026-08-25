@@ -14,6 +14,7 @@ pub(super) fn model(
     lines_count: usize,
     copy_text: &Option<String>,
     copy_target: Option<(usize, DiffTextRegion)>,
+    local_review_draft: Option<&crate::view::local_review_ui::LocalReviewCommentDraft>,
 ) -> ContextMenuModel {
     let title: SharedString = path
         .as_ref()
@@ -31,6 +32,21 @@ pub(super) fn model(
         ));
     }
     items.push(ContextMenuItem::Separator);
+
+    if let Some(draft) = local_review_draft {
+        items.push(ContextMenuItem::Entry {
+            label: "Add local review comment…".into(),
+            icon: Some("icons/pencil.svg".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::OpenPopover {
+                kind: PopoverKind::LocalReviewCommentPrompt {
+                    draft: draft.clone(),
+                },
+            }),
+        });
+        items.push(ContextMenuItem::Separator);
+    }
 
     let (line_label, line_icon, line_shortcut, line_reverse) = match area {
         DiffArea::Unstaged => ("Stage line", "icons/plus.svg", Some("S"), false),
@@ -164,4 +180,52 @@ pub(super) fn model(
     });
 
     ContextMenuModel::new(items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gitcomet_state::local_review::ReviewSide;
+
+    #[test]
+    fn local_review_draft_adds_direct_prompt_action() {
+        let draft = crate::view::local_review_ui::LocalReviewCommentDraft {
+            repo_id: RepoId(7),
+            workdir: "/tmp/review".into(),
+            session_id: "ab:aaa..bbb".into(),
+            title: "main → agent".into(),
+            base_oid: "aaa".into(),
+            head_oid: "bbb".into(),
+            path: "src/lib.rs".into(),
+            side: ReviewSide::New,
+            old_line: None,
+            new_line: Some(42),
+        };
+
+        let menu = model(
+            draft.repo_id,
+            DiffArea::Unstaged,
+            &Some(draft.path.clone()),
+            &None,
+            0,
+            &None,
+            &None,
+            1,
+            &None,
+            None,
+            Some(&draft),
+        );
+
+        assert!(menu.items.iter().any(|item| matches!(
+            item,
+            ContextMenuItem::Entry { label, action, disabled: false, .. }
+                if label.as_ref() == "Add local review comment…"
+                    && matches!(
+                        action.as_ref(),
+                        ContextMenuAction::OpenPopover {
+                            kind: PopoverKind::LocalReviewCommentPrompt { draft: opened }
+                        } if opened == &draft
+                    )
+        )));
+    }
 }

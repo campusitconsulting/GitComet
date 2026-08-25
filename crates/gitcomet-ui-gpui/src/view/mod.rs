@@ -170,6 +170,7 @@ mod history_refs_hover;
 mod icons;
 #[cfg(any(test, target_os = "linux", target_os = "freebsd"))]
 mod linux_desktop_integration;
+mod local_review_ui;
 mod markdown_preview;
 mod mod_helpers;
 mod open_source_licenses_data;

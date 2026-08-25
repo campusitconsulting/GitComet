@@ -201,6 +201,7 @@ fn repo_for_popover<'a>(state: &'a AppState, popover: &PopoverKind) -> Option<&'
         | PopoverKind::HistoryAuthorFilter { repo_id }
         | PopoverKind::CommitShaLinkMenu { repo_id, .. }
         | PopoverKind::ReflogEntryMenu { repo_id, .. } => Some(*repo_id),
+        PopoverKind::LocalReviewCommentPrompt { draft } => Some(draft.repo_id),
     }?;
 
     state.repos.iter().find(|r| r.id == repo_id)
@@ -403,7 +404,8 @@ fn hash_repo_for_popover<H: Hasher>(repo: &RepoState, popover: &PopoverKind, has
         | PopoverKind::RepoPicker
         | PopoverKind::CloneRepo
         | PopoverKind::ReflogEntryMenu { .. }
-        | PopoverKind::CommitPrompt { .. } => {}
+        | PopoverKind::CommitPrompt { .. }
+        | PopoverKind::LocalReviewCommentPrompt { .. } => {}
     }
 }
 
@@ -647,6 +649,22 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
             path.hash(hasher);
             hunks_count.hash(hasher);
             lines_count.hash(hasher);
+        }
+        PopoverKind::LocalReviewCommentPrompt { draft } => {
+            99u8.hash(hasher);
+            draft.repo_id.hash(hasher);
+            draft.workdir.hash(hasher);
+            draft.session_id.hash(hasher);
+            draft.title.hash(hasher);
+            draft.base_oid.hash(hasher);
+            draft.head_oid.hash(hasher);
+            draft.path.hash(hasher);
+            match draft.side {
+                gitcomet_state::local_review::ReviewSide::Old => 0u8.hash(hasher),
+                gitcomet_state::local_review::ReviewSide::New => 1u8.hash(hasher),
+            }
+            draft.old_line.hash(hasher);
+            draft.new_line.hash(hasher);
         }
         PopoverKind::ConflictResolverInputRowMenu {
             line_label,

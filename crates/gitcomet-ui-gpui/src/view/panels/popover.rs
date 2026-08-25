@@ -21,6 +21,7 @@ mod fingerprint;
 mod force_delete_branch_confirm;
 mod force_push_confirm;
 mod force_remove_worktree_confirm;
+mod local_review_comment_prompt;
 mod merge_abort_confirm;
 mod merge_commit_confirm;
 mod picker_nav;
@@ -317,6 +318,8 @@ pub(in super::super) struct PopoverHost {
     checkout_remote_branch_focus: DialogFocus,
     stash_message_input: Entity<components::TextInput>,
     stash_focus: DialogFocus,
+    local_review_comment_input: Entity<components::TextInput>,
+    local_review_comment_focus: DialogFocus,
     stash_picker_prompt_selected_index: Option<usize>,
     stash_picker_search_input: Option<Entity<components::TextInput>>,
     _stash_picker_search_input_subscription: Option<gpui::Subscription>,
@@ -834,6 +837,7 @@ pub(in super::super) fn popover_width_spec(kind: &PopoverKind) -> Option<Popover
         | PopoverKind::CloneRepo
         | PopoverKind::CreateTagPrompt { .. }
         | PopoverKind::SquashPrompt { .. } => Some(DIALOG_420_WIDTH),
+        PopoverKind::LocalReviewCommentPrompt { .. } => Some(PopoverWidthSpec::fixed(480.0)),
         PopoverKind::CreateBranchFromRefPrompt { .. }
         | PopoverKind::RenameBranchPrompt { .. }
         | PopoverKind::CheckoutRemoteBranchPrompt { .. } => Some(DIALOG_540_WIDTH),
@@ -1318,6 +1322,22 @@ impl PopoverHost {
                 cx,
             )
         });
+        let local_review_comment_scroll = ScrollHandle::new();
+        let local_review_comment_input = cx.new(|cx| {
+            let mut input = components::TextInput::new(
+                components::TextInputOptions {
+                    placeholder: "Write a review comment for agents…".into(),
+                    multiline: true,
+                    soft_wrap: true,
+                    min_lines: 4,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            input.set_vertical_scroll_handle(Some(local_review_comment_scroll.clone()));
+            input
+        });
 
         // The subject input re-renders the host on every keystroke so the
         // Squash button's disabled state (driven by whether the message is
@@ -1537,6 +1557,17 @@ impl PopoverHost {
             |this| matches!(this.popover, Some(PopoverKind::StashPrompt)),
             |this, window, cx| this.submit_stash(window, cx),
         ));
+        prompt_input_subscriptions.push(cx.observe(
+            &local_review_comment_input,
+            |this, _input, cx| {
+                if matches!(
+                    this.popover,
+                    Some(PopoverKind::LocalReviewCommentPrompt { .. })
+                ) {
+                    cx.notify();
+                }
+            },
+        ));
         prompt_input_subscriptions.push(Self::prompt_enter_subscription(
             &submodule_ref_input,
             window,
@@ -1644,6 +1675,7 @@ impl PopoverHost {
         let create_branch_from_ref_focus = DialogFocus::new(cx);
         let checkout_remote_branch_focus = DialogFocus::new(cx);
         let stash_focus = DialogFocus::new(cx);
+        let local_review_comment_focus = DialogFocus::new(cx);
         let commit_prompt_focus = DialogFocus::new(cx);
         let clone_repo_browse_focus_handle = cx.focus_handle().tab_index(0).tab_stop(true);
         let squash_cancel_focus_handle = cx.focus_handle().tab_index(0).tab_stop(true);
@@ -1772,6 +1804,8 @@ impl PopoverHost {
             checkout_remote_branch_focus,
             stash_message_input,
             stash_focus,
+            local_review_comment_input,
+            local_review_comment_focus,
             stash_picker_prompt_selected_index: None,
             stash_picker_search_input: None,
             commit_prompt_message_drafts: FxHashMap::default(),
@@ -1825,6 +1859,7 @@ impl PopoverHost {
             &self.remote_url_edit_input,
             &self.create_branch_input,
             &self.stash_message_input,
+            &self.local_review_comment_input,
             &self.commit_prompt_message_input,
             &self.push_upstream_branch_input,
             &self.worktree_path_input,
@@ -2687,6 +2722,47 @@ impl PopoverHost {
         self.dismiss_inline_popover(window, cx);
     }
 
+    fn submit_local_review_comment(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(PopoverKind::LocalReviewCommentPrompt { draft }) = self.popover.clone() else {
+            return;
+        };
+        let body = self
+            .local_review_comment_input
+            .read_with(cx, |input, _| input.text().trim().to_string());
+        if body.is_empty() {
+            return;
+        }
+        let now_unix_ms = match std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        {
+            Some(now) => now,
+            None => {
+                self.push_toast(
+                    components::ToastKind::Error,
+                    "Could not create local review timestamp.".to_string(),
+                    cx,
+                );
+                return;
+            }
+        };
+        let comment_id = crate::view::local_review_ui::next_comment_id(now_unix_ms);
+        let (session, comment) = crate::view::local_review_ui::persistence_payload(
+            &draft,
+            body,
+            comment_id,
+            now_unix_ms,
+        );
+        self.store.dispatch(Msg::AddLocalReviewComment {
+            repo_id: draft.repo_id,
+            workdir: draft.workdir,
+            session,
+            comment,
+        });
+        self.close_popover(cx);
+    }
+
     pub(super) fn can_submit_remote_add(&self, cx: &mut gpui::Context<Self>) -> bool {
         self.remote_name_input
             .read_with(cx, |i, _| !i.text().trim().is_empty())
@@ -3147,6 +3223,19 @@ impl PopoverHost {
                     let focus = self
                         .stash_message_input
                         .read_with(cx, |i, _| i.focus_handle());
+                    window.focus(&focus, cx);
+                }
+                PopoverKind::LocalReviewCommentPrompt { .. } => {
+                    let theme = self.theme;
+                    self.local_review_comment_input.update(cx, |input, cx| {
+                        input.clear_transient_key_presses();
+                        input.set_theme(theme, cx);
+                        input.set_text("", cx);
+                        cx.notify();
+                    });
+                    let focus = self
+                        .local_review_comment_input
+                        .read_with(cx, |input, _| input.focus_handle());
                     window.focus(&focus, cx);
                 }
                 PopoverKind::CommitPrompt { repo_id } => {
@@ -4011,6 +4100,9 @@ impl PopoverHost {
                 branch,
             } => checkout_remote_branch_prompt::panel(self, repo_id, remote, branch, cx),
             PopoverKind::StashPrompt => stash_prompt::panel(self, cx),
+            PopoverKind::LocalReviewCommentPrompt { draft } => {
+                local_review_comment_prompt::panel(self, &draft, cx)
+            }
             PopoverKind::CommitPrompt { repo_id } => commit_prompt::panel(self, repo_id, cx),
             PopoverKind::StashPickerPrompt { repo_id, purpose } => {
                 stash_picker_prompt::panel(self, repo_id, purpose, cx)
@@ -4239,6 +4331,7 @@ impl PopoverHost {
                 lines_count,
                 copy_text,
                 copy_target,
+                local_review_draft,
             } => self.context_menu_view(
                 PopoverKind::DiffEditorMenu {
                     repo_id,
@@ -4251,6 +4344,7 @@ impl PopoverHost {
                     lines_count,
                     copy_text,
                     copy_target,
+                    local_review_draft,
                 },
                 cx,
             ),

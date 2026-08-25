@@ -4612,6 +4612,10 @@ pub(super) enum PopoverKind {
         lines_count: usize,
         copy_text: Option<String>,
         copy_target: Option<(usize, DiffTextRegion)>,
+        local_review_draft: Option<super::local_review_ui::LocalReviewCommentDraft>,
+    },
+    LocalReviewCommentPrompt {
+        draft: super::local_review_ui::LocalReviewCommentDraft,
     },
     ConflictResolverInputRowMenu {
         line_label: SharedString,

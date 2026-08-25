@@ -949,6 +949,7 @@ fn diff_editor_menu_has_open_file_entries(cx: &mut gpui::TestAppContext) {
                             lines_count: 0,
                             copy_text: Some("x".to_string()),
                             copy_target: None,
+                            local_review_draft: None,
                         },
                         cx,
                     )

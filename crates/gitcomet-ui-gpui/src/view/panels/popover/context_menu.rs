@@ -521,6 +521,7 @@ impl PopoverHost {
                 lines_count,
                 copy_text,
                 copy_target,
+                local_review_draft,
             } => Some(diff_editor::model(
                 *repo_id,
                 *area,
@@ -532,6 +533,7 @@ impl PopoverHost {
                 *lines_count,
                 copy_text,
                 *copy_target,
+                local_review_draft.as_ref(),
             )),
             PopoverKind::ConflictResolverInputRowMenu {
                 line_label,

@@ -1941,6 +1941,7 @@ fn file_and_diff_context_menu_shortcuts_match_expected_actions(cx: &mut gpui::Te
                 lines_count: 3,
                 copy_text: Some("copied selection".into()),
                 copy_target: None,
+                local_review_draft: None,
             },
         )
     });
@@ -1984,6 +1985,7 @@ fn file_and_diff_context_menu_shortcuts_match_expected_actions(cx: &mut gpui::Te
                 lines_count: 1,
                 copy_text: Some("staged copy".into()),
                 copy_target: None,
+                local_review_draft: None,
             },
         )
     });
@@ -5019,6 +5021,7 @@ fn diff_editor_staging_context_menu_restores_diff_panel_focus_for_f4(
             lines_count: 1,
             copy_text: None,
             copy_target: None,
+            local_review_draft: None,
         },
     );
 
