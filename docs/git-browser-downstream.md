@@ -44,9 +44,9 @@ upstream extension point is agreed.
 Validation:
 
 ```sh
-cargo check -p gitcomet-ui-gpui --features gpui_platform/runtime_shaders
+cargo check -p gitcomet-ui-gpui --features runtime-shaders
 cargo test -p gitcomet-ui-gpui --lib \
-  --features gpui_platform/runtime_shaders \
+  --features runtime-shaders \
   full_chrome_layout_only_caches_always_mounted_subviews
 cargo test -p gitcomet-state
 ```

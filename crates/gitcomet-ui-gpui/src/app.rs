@@ -213,9 +213,11 @@ fn normal_launch_config(
 ) -> WindowLaunchConfig {
     let mut view_config = GitCometViewConfig::normal(startup_crash_report);
     view_config.initial_path = initial_path;
+    let title = std::env::var("GITCOMET_WINDOW_TITLE").unwrap_or_else(|_| "GitComet".to_string());
+    let app_id = std::env::var("GITCOMET_APP_ID").unwrap_or_else(|_| "gitcomet".to_string());
     WindowLaunchConfig {
-        title: "GitComet".to_string(),
-        app_id: "gitcomet".to_string(),
+        title,
+        app_id,
         view_config,
     }
 }
@@ -224,9 +226,11 @@ fn normal_launch_config_with_initial_repository(
     initial_path: PathBuf,
     startup_crash_report: Option<StartupCrashReport>,
 ) -> WindowLaunchConfig {
+    let title = std::env::var("GITCOMET_WINDOW_TITLE").unwrap_or_else(|_| "GitComet".to_string());
+    let app_id = std::env::var("GITCOMET_APP_ID").unwrap_or_else(|_| "gitcomet".to_string());
     WindowLaunchConfig {
-        title: "GitComet".to_string(),
-        app_id: "gitcomet".to_string(),
+        title,
+        app_id,
         view_config: GitCometViewConfig::normal_with_initial_repository(
             initial_path,
             startup_crash_report,

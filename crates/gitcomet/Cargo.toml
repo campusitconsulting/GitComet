@@ -20,6 +20,7 @@ ui-gpui-runtime = [
 ]
 ui-gpui = ["ui-gpui-runtime"]
 gix = ["dep:gitcomet-git-gix"]
+runtime-shaders = ["gitcomet-ui-gpui/runtime-shaders"]
 
 [dependencies]
 clap = { workspace = true }

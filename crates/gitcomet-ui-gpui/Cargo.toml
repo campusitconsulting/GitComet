@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 default = []
+runtime-shaders = ["gpui_platform/runtime_shaders"]
 benchmarks = [
     "gitcomet-core/benchmarks",
     "gitcomet-state/benchmarks",
