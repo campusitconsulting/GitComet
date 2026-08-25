@@ -5,9 +5,39 @@ use gitcomet_core::domain::LogScope;
 use gitcomet_core::domain::SubmoduleStatus;
 use palette::IntoColor;
 use std::num::NonZeroU32;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(in crate::view) const WORKTREE_ICON_PATH: &str = "icons/git_worktree.svg";
 const STASH_ICON_PATH: &str = crate::view::icons::STASH_ICON_PATH;
+
+fn system_time_from_unix_seconds(seconds: i64) -> SystemTime {
+    if seconds >= 0 {
+        UNIX_EPOCH
+            .checked_add(Duration::from_secs(seconds as u64))
+            .unwrap_or(UNIX_EPOCH)
+    } else {
+        UNIX_EPOCH
+            .checked_sub(Duration::from_secs(seconds.unsigned_abs()))
+            .unwrap_or(UNIX_EPOCH)
+    }
+}
+
+fn sidebar_date_label(time: SystemTime) -> String {
+    let formatted = sidebar_full_utc_date(time);
+    formatted.get(..10).unwrap_or(formatted.as_str()).to_owned()
+}
+
+fn sidebar_full_utc_date(time: SystemTime) -> String {
+    let mut formatted = String::with_capacity(20);
+    format_datetime_into(
+        &mut formatted,
+        time,
+        DateTimeFormat::YmdHm,
+        Timezone::Utc,
+        true,
+    );
+    formatted
+}
 
 pub(in crate::view) fn listed_workspace_paths_by_branch(
     repo: &RepoState,
@@ -435,6 +465,12 @@ impl SidebarPaneView {
         let rows = presentation.rows;
         let workspace_badges = presentation.workspace_badges;
         let repo_workdir = this.active_repo().map(|r| r.spec.workdir.clone());
+        let ref_metadata = this
+            .active_repo()
+            .and_then(|repo| match &repo.ref_metadata {
+                Loadable::Ready(metadata) => Some(Arc::clone(metadata)),
+                _ => None,
+            });
         let theme = this.theme;
         let worktree_badge_palette = worktree_badge_palette(theme);
         let icon_primary = theme.colors.accent.foreground;
@@ -1021,6 +1057,23 @@ impl SidebarPaneView {
                     let row_state = components::InteractiveRowState::default()
                         .selected(is_active, active_background)
                         .open(context_menu_active);
+                    let created_at = this.cached_worktree_created_at(&path);
+                    let (created_label, created_tooltip): (SharedString, SharedString) =
+                        match created_at {
+                            Some(created_at) => (
+                                sidebar_date_label(created_at).into(),
+                                format!(
+                                    "Worktree directory created: {}",
+                                    sidebar_full_utc_date(created_at)
+                                )
+                                .into(),
+                            ),
+                            None => (
+                                "date ?".into(),
+                                "Worktree directory creation date unavailable; modification time is not used as a fallback"
+                                    .into(),
+                            ),
+                        };
 
                     div()
                         .id(("worktree_item", ix))
@@ -1123,7 +1176,16 @@ impl SidebarPaneView {
                                                     ),
                                             ),
                                     )
-                                }),
+                                })
+                                .child(
+                                    div()
+                                        .id(("worktree_created_date", ix))
+                                        .flex_none()
+                                        .text_xs()
+                                        .text_color(theme.colors.foreground.secondary)
+                                        .child(created_label)
+                                        .gitcomet_tooltip(theme, created_tooltip),
+                                ),
                         )
                         .on_click(cx.listener(move |this, e: &ClickEvent, _w, cx| {
                             if !e.standard_click() {
@@ -1651,6 +1713,10 @@ impl SidebarPaneView {
                     let full_name_for_reveal: SharedString = name.clone();
                     let full_name_for_menu: SharedString = name.clone();
                     let full_name_for_tooltip: SharedString = name.clone();
+                    let branch_tip_committed_at = ref_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.get(name.as_ref()))
+                        .map(|metadata| metadata.committed_at);
                     let section_key = match section {
                         BranchSection::Local => "local",
                         BranchSection::Remote => "remote",
@@ -1821,7 +1887,8 @@ impl SidebarPaneView {
                             .flex_1(),
                         );
 
-                    let show_branch_badges = divergence_behind.is_some()
+                    let show_branch_badges = branch_tip_committed_at.is_some()
+                        || divergence_behind.is_some()
                         || divergence_ahead.is_some()
                         || (is_upstream && section == BranchSection::Remote)
                         || show_workspace_badge;
@@ -1831,6 +1898,26 @@ impl SidebarPaneView {
                         .flex()
                         .items_center()
                         .gap(badge_gap_px);
+
+                    if let Some(committed_at) = branch_tip_committed_at {
+                        let tip_time = system_time_from_unix_seconds(committed_at);
+                        end_accessories = end_accessories.child(
+                            div()
+                                .id(("branch_tip_date", ix))
+                                .flex_none()
+                                .text_xs()
+                                .text_color(theme.colors.foreground.secondary)
+                                .child(sidebar_date_label(tip_time))
+                                .gitcomet_tooltip(
+                                    theme,
+                                    format!(
+                                        "Tip commit date: {} (not branch creation date)",
+                                        sidebar_full_utc_date(tip_time)
+                                    )
+                                    .into(),
+                                ),
+                        );
+                    }
 
                     if divergence_behind.is_some() || divergence_ahead.is_some() {
                         if let Some(behind) = divergence_behind {
@@ -2091,13 +2178,24 @@ impl SidebarPaneView {
                                 );
                             }),
                         )
-                        .gitcomet_tooltip(
-                            theme,
-                            super::super::branch_sidebar::branch_sidebar_branch_tooltip(
+                        .gitcomet_tooltip(theme, {
+                            let mut tooltip = super::super::branch_sidebar::branch_sidebar_branch_tooltip(
                                 full_name_for_tooltip.as_ref(),
                                 is_upstream,
-                            ),
-                        );
+                            )
+                            .to_string();
+                            match branch_tip_committed_at {
+                                Some(committed_at) => {
+                                    tooltip.push_str("\nTip commit date: ");
+                                    tooltip.push_str(&sidebar_full_utc_date(
+                                        system_time_from_unix_seconds(committed_at),
+                                    ));
+                                    tooltip.push_str(" (not branch creation date)");
+                                }
+                                None => tooltip.push_str("\nTip commit date: unavailable"),
+                            }
+                            tooltip.into()
+                        });
 
                     row.into_any_element()
                 }
@@ -2585,6 +2683,16 @@ mod tests {
     use gitcomet_state::store::AppStore;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant, SystemTime};
+
+    #[test]
+    fn sidebar_dates_use_stable_utc_labels() {
+        assert_eq!(sidebar_date_label(UNIX_EPOCH), "1970-01-01");
+        assert_eq!(sidebar_full_utc_date(UNIX_EPOCH), "1970-01-01 00:00 UTC");
+        assert_eq!(
+            sidebar_full_utc_date(system_time_from_unix_seconds(-60)),
+            "1969-12-31 23:59 UTC"
+        );
+    }
 
     struct BlockingBackend;
 

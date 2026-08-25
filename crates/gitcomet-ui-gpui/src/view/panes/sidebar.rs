@@ -229,6 +229,11 @@ pub(in super::super) struct SidebarPaneView {
     _collapsed_popover_filter_subscription: gpui::Subscription,
     sidebar_presentation_cache: SidebarPresentationCache,
     path_display_cache: std::cell::RefCell<path_display::PathDisplayCache>,
+    /// Filesystem birth times are stable for a worktree directory. Cache both
+    /// available and unavailable results so virtualized row rendering never
+    /// performs filesystem I/O per frame.
+    worktree_created_at_cache:
+        std::cell::RefCell<BTreeMap<std::path::PathBuf, Option<std::time::SystemTime>>>,
     sidebar_collapsed_items_by_repo: BTreeMap<std::path::PathBuf, BTreeSet<String>>,
     sidebar_pinned_branches_by_repo: BTreeMap<std::path::PathBuf, BTreeSet<String>>,
     /// Independent of the Worktrees section's collapse state. Keeping this on
@@ -272,6 +277,8 @@ struct SidebarNotifyFingerprint {
     /// has to repaint when it changes — nothing else in this fingerprint moves
     /// when the user opens a different file.
     diff_target_rev: u64,
+    /// Branch rows show tip-commit dates from the lazily loaded ref metadata.
+    ref_metadata_rev: u64,
 }
 
 impl SidebarNotifyFingerprint {
@@ -292,6 +299,10 @@ impl SidebarNotifyFingerprint {
             .and_then(|repo_id| state.repos.iter().find(|r| r.id == repo_id))
             .map(|r| r.diff_state.diff_target_rev)
             .unwrap_or(0);
+        let ref_metadata_rev = active_repo_id
+            .and_then(|repo_id| state.repos.iter().find(|r| r.id == repo_id))
+            .map(|r| r.ref_metadata_rev)
+            .unwrap_or(0);
         Self {
             active_repo_id,
             repo_fingerprint,
@@ -301,8 +312,17 @@ impl SidebarNotifyFingerprint {
             active_workspace_badges_hash,
             file_browser_rev,
             diff_target_rev,
+            ref_metadata_rev,
         }
     }
+}
+
+/// Return only the directory's real filesystem birth time. Modification time
+/// changes during normal work and would be a misleading creation-date fallback.
+fn worktree_directory_created_at(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.created())
+        .ok()
 }
 
 impl SidebarPaneView {
@@ -325,9 +345,17 @@ impl SidebarPaneView {
             let should_notify = next_fingerprint != this.notify_fingerprint;
             let repo_changed =
                 this.notify_fingerprint.active_repo_id != next_fingerprint.active_repo_id;
+            let sidebar_data_changed =
+                this.notify_fingerprint.repo_fingerprint != next_fingerprint.repo_fingerprint;
 
             this.notify_fingerprint = next_fingerprint;
             this.state = next;
+            if repo_changed || sidebar_data_changed {
+                // A removed-and-recreated worktree may reuse the same path with
+                // a new birth time. Drop the memoized filesystem result when
+                // the active repository's sidebar data changes.
+                this.worktree_created_at_cache.borrow_mut().clear();
+            }
             this.dispatch_sidebar_data_request_if_needed(cx);
 
             // Reflect the newly-active repo's stored search query in the input.
@@ -440,6 +468,7 @@ impl SidebarPaneView {
             _collapsed_popover_filter_subscription: collapsed_popover_filter_subscription,
             sidebar_presentation_cache: SidebarPresentationCache::default(),
             path_display_cache: std::cell::RefCell::new(path_display::PathDisplayCache::default()),
+            worktree_created_at_cache: std::cell::RefCell::new(BTreeMap::new()),
             sidebar_collapsed_items_by_repo,
             sidebar_pinned_branches_by_repo,
             show_worktree_badges,
@@ -576,6 +605,19 @@ impl SidebarPaneView {
     pub(in super::super) fn cached_path_display(&self, path: &std::path::Path) -> SharedString {
         let mut cache = self.path_display_cache.borrow_mut();
         path_display::cached_path_display(&mut cache, path)
+    }
+
+    pub(in super::super) fn cached_worktree_created_at(
+        &self,
+        path: &std::path::Path,
+    ) -> Option<std::time::SystemTime> {
+        let mut cache = self.worktree_created_at_cache.borrow_mut();
+        if let Some(created_at) = cache.get(path) {
+            return *created_at;
+        }
+        let created_at = worktree_directory_created_at(path);
+        cache.insert(path.to_path_buf(), created_at);
+        created_at
     }
 
     #[cfg(test)]
@@ -908,6 +950,17 @@ impl SidebarPaneView {
     }
 
     fn dispatch_sidebar_data_request_if_needed(&mut self, cx: &mut gpui::Context<Self>) {
+        // Ref metadata is separate from the heavier sidebar data request. Load
+        // it only when absent/stale so branch rows can label the tip commit date
+        // without repeatedly walking refs on every sidebar refresh.
+        let ref_metadata_repo = self
+            .active_repo()
+            .and_then(|repo| matches!(repo.ref_metadata, Loadable::NotLoaded).then_some(repo.id));
+        if let Some(repo_id) = ref_metadata_repo {
+            let store = Arc::clone(&self.store);
+            cx.defer(move |_cx| store.dispatch(Msg::LoadRefMetadata { repo_id }));
+        }
+
         let next = sidebar_presentation::sidebar_request_fingerprint(
             self.state.as_ref(),
             &self.sidebar_collapsed_items_by_repo,
@@ -3142,6 +3195,7 @@ mod file_search_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::PathBuf;
 
     /// Three copies of "is the tree filtered" exist: this one, the reducer's
@@ -3181,6 +3235,30 @@ mod tests {
         let initial = SidebarNotifyFingerprint::from_state(&state);
 
         state.repos.push(repo_state(RepoId(2), "/tmp/repo-wt"));
+
+        assert_ne!(SidebarNotifyFingerprint::from_state(&state), initial);
+    }
+
+    #[test]
+    fn worktree_date_is_only_the_filesystem_birth_time() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let metadata_created = fs::metadata(temp.path()).expect("metadata").created().ok();
+        assert_eq!(worktree_directory_created_at(temp.path()), metadata_created);
+
+        let missing = temp.path().join("not-a-worktree");
+        assert_eq!(worktree_directory_created_at(&missing), None);
+    }
+
+    #[test]
+    fn sidebar_notify_fingerprint_tracks_ref_metadata_dates() {
+        let mut state = AppState {
+            repos: vec![repo_state(RepoId(1), "/tmp/repo")],
+            active_repo: Some(RepoId(1)),
+            ..AppState::default()
+        };
+        let initial = SidebarNotifyFingerprint::from_state(&state);
+
+        state.repos[0].ref_metadata_rev = state.repos[0].ref_metadata_rev.wrapping_add(1);
 
         assert_ne!(SidebarNotifyFingerprint::from_state(&state), initial);
     }
