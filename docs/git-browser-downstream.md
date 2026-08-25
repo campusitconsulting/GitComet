@@ -134,11 +134,23 @@ the section collapsed is the combined view, badges hidden with the section
 expanded is the separate view, and badges shown with the section expanded is
 the both view. Turning badges off never hides or unloads the standalone section.
 
-The remaining product gap here is honest date metadata. Git does not store a
-canonical branch creation date; the UI must label an earliest
-available reflog time as estimated and keep the branch tip-commit date distinct.
-Worktree creation can use filesystem birth time where supported, with a clearly
-labelled fallback rather than presenting an mtime as exact creation time.
+Sidebar date metadata is intentionally conservative:
+
+- branch rows show the ref's **tip commit date**, loaded through the existing
+  batched `for-each-ref` metadata path. Both the row tooltip and date tooltip say
+  that this is not a branch creation date; Git has no canonical one;
+- worktree rows show the worktree directory's filesystem birth date when the
+  platform/filesystem exposes it. Otherwise the row displays `date ?` and the
+  tooltip explains that creation time is unavailable. Modification time is not
+  substituted because normal work would make it look like a false creation
+  date;
+- compact row labels use `YYYY-MM-DD`; tooltips include minutes and explicitly
+  label UTC. Metadata is cached with the sidebar/ref load state, so rendering
+  rows does not run Git or filesystem queries per frame.
+
+An earliest reflog timestamp could later be offered as a separately labelled
+**estimated branch start**, but it must never replace or masquerade as the tip
+commit date.
 
 ### A/B comparison wiring audit (2026-08-25)
 

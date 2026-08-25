@@ -126,3 +126,20 @@ locking, revision check, temporary-file write, `fsync`, and atomic rename
 protocol or it can overwrite another agent's update.
 
 Agents should not rewrite unknown fields or downgrade `schema_version`.
+
+## Diff UI entry point
+
+When the visible diff is the commit-to-commit range currently stored in the
+comparison shelf, right-clicking a source line offers **Add local review
+comment…**. The prompt anchors added lines to the `new` side, removed lines to
+the `old` side, and context lines to the side that was clicked in split view.
+It creates (or reuses) the deterministic `ab:<base>..<head>` session and writes
+the same v1 sidecar through the lock and atomic-write protocol above. A success
+or error notification reports the result; the CLI can read the new comment
+immediately from any linked worktree.
+
+This first UI slice intentionally supports immutable commit-to-commit A/B
+ranges only. Dirty-worktree endpoints, inline comment markers, a session/comment
+list, re-anchoring hashes, and live reload after another process writes the
+sidecar remain follow-up work. Until markers land, use `gitcomet review show
+<session-id>` to inspect saved comments.
