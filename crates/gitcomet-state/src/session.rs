@@ -1,5 +1,8 @@
-use crate::model::{AppState, DefaultTagType, GitLogTagFetchMode, RepoId};
-use gitcomet_core::domain::{HistoryMode, LogScope};
+use crate::model::{
+    AppState, ComparisonMark, ComparisonShelf, DefaultTagType, GitLogTagFetchMode, NamedComparison,
+    RepoId,
+};
+use gitcomet_core::domain::{CommitId, HistoryMode, LogScope};
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -268,7 +271,29 @@ struct UiSessionFile {
     repo_history_scopes: Option<BTreeMap<String, HistoryScopeSetting>>,
     repo_history_author_filters: Option<BTreeMap<String, Option<String>>>,
     repo_fetch_prune_deleted_remote_tracking_branches: Option<BTreeMap<String, bool>>,
+    repo_comparison_shelves: Option<BTreeMap<String, ComparisonShelfFile>>,
     survey_prompt: Option<SurveyPromptSession>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+struct ComparisonShelfFile {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    named: Vec<NamedComparisonFile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct NamedComparisonFile {
+    name: String,
+    a: ComparisonMarkFile,
+    b: ComparisonMarkFile,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct ComparisonMarkFile {
+    commit_id: String,
+    label: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -410,6 +435,7 @@ pub(crate) struct RepoSessionPreferences {
     pub(crate) repo_history_scopes: BTreeMap<String, LogScope>,
     pub(crate) repo_history_author_filters: BTreeMap<String, Option<String>>,
     pub(crate) repo_fetch_prune_deleted_remote_tracking_branches: BTreeMap<String, bool>,
+    pub(crate) repo_comparison_shelves: BTreeMap<String, ComparisonShelf>,
 }
 
 pub(crate) fn load_repo_session_preferences() -> RepoSessionPreferences {
@@ -444,6 +470,14 @@ pub(crate) fn load_repo_session_preferences_from_path(
         repo_fetch_prune_deleted_remote_tracking_branches: file
             .repo_fetch_prune_deleted_remote_tracking_branches
             .unwrap_or_default(),
+        repo_comparison_shelves: file
+            .repo_comparison_shelves
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(workdir, shelf)| {
+                comparison_shelf_from_file(shelf).map(|shelf| (workdir, shelf))
+            })
+            .collect(),
     }
 }
 
@@ -579,13 +613,39 @@ pub fn persist_from_state(state: &AppState) -> io::Result<()> {
         return Ok(());
     };
 
-    let snapshot = snapshot_repos_from_state(state);
-    persist_repos_snapshot_to_path(&snapshot, &path)
+    persist_from_state_to_path(state, &path)
 }
 
 pub fn persist_from_state_to_path(state: &AppState, path: &Path) -> io::Result<()> {
     let snapshot = snapshot_repos_from_state(state);
-    persist_repos_snapshot_to_path(&snapshot, path)
+    with_session_file_persist_lock(|| {
+        let mut file = load_file(path).unwrap_or_default();
+        file.version = CURRENT_SESSION_FILE_VERSION;
+        file.open_repos = snapshot
+            .open_repos
+            .iter()
+            .map(|path| path.to_string())
+            .collect();
+        file.active_repo = snapshot
+            .active_repo_index
+            .and_then(|ix| snapshot.open_repos.get(ix))
+            .map(|path| path.to_string());
+
+        let shelves = file.repo_comparison_shelves.get_or_insert_default();
+        for repo in &state.repos {
+            let key = repo.session_workdir_key().to_string();
+            if repo.comparison_shelf.named.is_empty() {
+                shelves.remove(&key);
+            } else {
+                shelves.insert(key, comparison_shelf_to_file(&repo.comparison_shelf));
+            }
+        }
+        if shelves.is_empty() {
+            file.repo_comparison_shelves = None;
+        }
+
+        persist_to_path(path, &file)
+    })
 }
 
 pub fn persist_repos_snapshot(snapshot: &SessionReposSnapshot) -> io::Result<()> {
@@ -1604,6 +1664,74 @@ fn external_code_editor_to_file(
     }
 }
 
+fn comparison_mark_to_file(mark: &ComparisonMark) -> ComparisonMarkFile {
+    ComparisonMarkFile {
+        commit_id: mark.commit_id.as_ref().to_string(),
+        label: mark.label.clone(),
+    }
+}
+
+fn comparison_mark_from_file(mark: ComparisonMarkFile) -> Option<ComparisonMark> {
+    let commit_id = mark.commit_id.trim();
+    if commit_id.is_empty() {
+        return None;
+    }
+    Some(ComparisonMark {
+        commit_id: CommitId(Arc::from(commit_id)),
+        label: mark.label,
+    })
+}
+
+fn comparison_shelf_to_file(shelf: &ComparisonShelf) -> ComparisonShelfFile {
+    ComparisonShelfFile {
+        named: shelf
+            .named
+            .iter()
+            .map(|pair| NamedComparisonFile {
+                name: pair.name.clone(),
+                a: comparison_mark_to_file(&pair.a),
+                b: comparison_mark_to_file(&pair.b),
+            })
+            .collect(),
+        selected_name: shelf.selected_name.clone(),
+    }
+}
+
+fn comparison_shelf_from_file(shelf: ComparisonShelfFile) -> Option<ComparisonShelf> {
+    let mut seen_names = FxHashSet::default();
+    let named: Vec<_> = shelf
+        .named
+        .into_iter()
+        .filter_map(|pair| {
+            let name = pair.name.trim();
+            if name.is_empty() || !seen_names.insert(name.to_string()) {
+                return None;
+            }
+            Some(NamedComparison {
+                name: name.to_string(),
+                a: comparison_mark_from_file(pair.a)?,
+                b: comparison_mark_from_file(pair.b)?,
+            })
+        })
+        .collect();
+    if named.is_empty() {
+        return None;
+    }
+
+    let selected_name = shelf
+        .selected_name
+        .filter(|selected| named.iter().any(|pair| pair.name == *selected));
+    let selected = selected_name
+        .as_deref()
+        .and_then(|selected| named.iter().find(|pair| pair.name == selected));
+    Some(ComparisonShelf {
+        a: selected.map(|pair| pair.a.clone()),
+        b: selected.map(|pair| pair.b.clone()),
+        named,
+        selected_name,
+    })
+}
+
 fn sanitize_ui_scale_percent(percent: Option<u32>) -> u32 {
     percent
         .unwrap_or(DEFAULT_UI_SCALE_PERCENT)
@@ -1953,6 +2081,119 @@ mod tests {
         ));
         let _ = fs::create_dir_all(&dir);
         dir
+    }
+
+    fn comparison_mark(commit_id: &str, label: &str) -> ComparisonMark {
+        ComparisonMark {
+            commit_id: CommitId(Arc::from(commit_id)),
+            label: label.to_string(),
+        }
+    }
+
+    fn state_with_named_comparison(
+        repo_id: RepoId,
+        workdir: PathBuf,
+        name: &str,
+        selected: bool,
+    ) -> AppState {
+        let mut state = AppState::default();
+        let mut repo = RepoState::new_opening(repo_id, RepoSpec { workdir });
+        let pair = NamedComparison {
+            name: name.to_string(),
+            a: comparison_mark("1111111", "main"),
+            b: comparison_mark("2222222", "feature"),
+        };
+        repo.comparison_shelf.named.push(pair.clone());
+        if selected {
+            repo.comparison_shelf.a = Some(pair.a.clone());
+            repo.comparison_shelf.b = Some(pair.b.clone());
+            repo.comparison_shelf.selected_name = Some(pair.name);
+            repo.comparison_mark = Some(pair.a);
+        }
+        state.repos.push(repo);
+        state.active_repo = Some(repo_id);
+        state
+    }
+
+    #[test]
+    fn named_comparisons_round_trip_per_repository_and_restore_selection() {
+        let dir = unique_session_test_dir("named-comparisons-round-trip");
+        let session_file = dir.join("session.json");
+        let repo_a = dir.join("repo-a");
+        let repo_b = dir.join("repo-b");
+
+        let state_a = state_with_named_comparison(RepoId(1), repo_a.clone(), "review A", true);
+        persist_from_state_to_path(&state_a, &session_file).expect("persist repo A comparisons");
+
+        // Repo A is now closed. Persisting the currently-open Repo B must add B
+        // without discarding A's reusable comparisons.
+        let state_b = state_with_named_comparison(RepoId(2), repo_b.clone(), "review B", false);
+        persist_from_state_to_path(&state_b, &session_file).expect("persist repo B comparisons");
+
+        let loaded = load_repo_session_preferences_from_path(&session_file);
+        let shelf_a = loaded
+            .repo_comparison_shelves
+            .get(&path_storage_key(&repo_a))
+            .expect("closed repo A shelf is retained");
+        assert_eq!(shelf_a.selected_name.as_deref(), Some("review A"));
+        assert_eq!(shelf_a.a, Some(comparison_mark("1111111", "main")));
+        assert_eq!(shelf_a.b, Some(comparison_mark("2222222", "feature")));
+        assert_eq!(
+            loaded
+                .repo_comparison_shelves
+                .get(&path_storage_key(&repo_b))
+                .expect("repo B shelf is persisted")
+                .named[0]
+                .name,
+            "review B"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clearing_open_repo_named_comparisons_does_not_clear_closed_repos() {
+        let dir = unique_session_test_dir("named-comparisons-clear-one-repo");
+        let session_file = dir.join("session.json");
+        let repo_a = dir.join("repo-a");
+        let repo_b = dir.join("repo-b");
+
+        let state_a = state_with_named_comparison(RepoId(1), repo_a.clone(), "keep", false);
+        persist_from_state_to_path(&state_a, &session_file).expect("persist repo A comparisons");
+        let mut state_b = state_with_named_comparison(RepoId(2), repo_b.clone(), "remove", false);
+        persist_from_state_to_path(&state_b, &session_file).expect("persist repo B comparisons");
+        state_b.repos[0].comparison_shelf = ComparisonShelf::default();
+        persist_from_state_to_path(&state_b, &session_file).expect("clear repo B comparisons");
+
+        let loaded = load_repo_session_preferences_from_path(&session_file);
+        assert!(
+            loaded
+                .repo_comparison_shelves
+                .contains_key(&path_storage_key(&repo_a))
+        );
+        assert!(
+            !loaded
+                .repo_comparison_shelves
+                .contains_key(&path_storage_key(&repo_b))
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_without_comparison_shelves_remains_backward_compatible() {
+        let dir = unique_session_test_dir("named-comparisons-backward-compatible");
+        let session_file = dir.join("session.json");
+        fs::write(
+            &session_file,
+            r#"{"version":3,"open_repos":["/tmp/repo"],"active_repo":"/tmp/repo"}"#,
+        )
+        .expect("seed pre-comparison session");
+
+        let loaded = load_repo_session_preferences_from_path(&session_file);
+        assert!(loaded.repo_comparison_shelves.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -7,9 +7,11 @@
 //! [`review_store_path`].
 
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
 pub const REVIEW_STORE_SCHEMA_VERSION: u32 = 1;
 
@@ -252,6 +254,153 @@ pub fn persist_to_path(path: &Path, store: &LocalReviewStore) -> io::Result<()> 
     temp.persist(path).map(|_| ()).map_err(|error| error.error)
 }
 
+const REVIEW_LOCK_WAIT: Duration = Duration::from_secs(5);
+const REVIEW_STALE_LOCK_AGE: Duration = Duration::from_secs(30);
+
+/// Resolve the common Git directory without invoking Git.
+///
+/// A normal checkout owns a `.git` directory. Linked worktrees and submodules
+/// instead carry a `.git` file pointing at their administrative directory,
+/// whose optional `commondir` file points back to storage shared by every
+/// checkout. Keeping this resolver in the schema crate lets the UI and CLI use
+/// the same sidecar location without putting filesystem work on the UI thread.
+pub fn resolve_git_common_dir(workdir: &Path) -> io::Result<PathBuf> {
+    let dot_git = workdir.join(".git");
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        let pointer = fs::read_to_string(&dot_git)?;
+        let value = pointer
+            .trim()
+            .strip_prefix("gitdir:")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid Git directory pointer at {}", dot_git.display()),
+                )
+            })?;
+        let value = PathBuf::from(value);
+        if value.is_absolute() {
+            value
+        } else {
+            workdir.join(value)
+        }
+    };
+    let git_dir = fs::canonicalize(git_dir)?;
+    let common_dir = match fs::read_to_string(git_dir.join("commondir")) {
+        Ok(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("empty commondir in {}", git_dir.display()),
+                ));
+            }
+            let value = PathBuf::from(value);
+            if value.is_absolute() {
+                value
+            } else {
+                git_dir.join(value)
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => git_dir,
+        Err(error) => return Err(error),
+    };
+    fs::canonicalize(common_dir)
+}
+
+struct ReviewWriterLock {
+    path: PathBuf,
+}
+
+impl ReviewWriterLock {
+    fn acquire(store_path: &Path) -> io::Result<Self> {
+        let parent = store_path.parent().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "review path has no parent")
+        })?;
+        fs::create_dir_all(parent)?;
+        let path = parent.join("reviews-v1.lock");
+        let deadline = Instant::now() + REVIEW_LOCK_WAIT;
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(_) => return Ok(Self { path }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    let stale = fs::metadata(&path)
+                        .and_then(|metadata| metadata.modified())
+                        .and_then(|modified| {
+                            SystemTime::now()
+                                .duration_since(modified)
+                                .map_err(io::Error::other)
+                        })
+                        .is_ok_and(|age| age >= REVIEW_STALE_LOCK_AGE);
+                    if stale {
+                        let _ = fs::remove_file(&path);
+                        continue;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            format!(
+                                "timed out waiting for another local review writer at {}",
+                                path.display()
+                            ),
+                        ));
+                    }
+                    thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+impl Drop for ReviewWriterLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Atomically add a UI/agent-compatible comment to the repository-local store.
+///
+/// The lock name and stale-lock policy intentionally match the CLI protocol.
+/// An existing session is preserved instead of being replaced, so a UI retry
+/// cannot discard comments another agent added to the same A/B session.
+pub fn persist_comment_for_workdir(
+    workdir: &Path,
+    session: LocalReviewSession,
+    comment: ReviewComment,
+) -> io::Result<(PathBuf, u64)> {
+    let common_dir = resolve_git_common_dir(workdir)?;
+    let path = review_store_path(&common_dir);
+    let _lock = ReviewWriterLock::acquire(&path)?;
+    let mut store = load_from_path(&path)?;
+
+    if !store.sessions.iter().any(|saved| saved.id == session.id) {
+        store.upsert_session(session.clone());
+    }
+    if store
+        .sessions
+        .iter()
+        .find(|saved| saved.id == session.id)
+        .is_some_and(|saved| saved.comments.iter().any(|saved| saved.id == comment.id))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("local review comment '{}' already exists", comment.id),
+        ));
+    }
+    if !store.upsert_comment(&session.id, comment) {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("local review session '{}' was not found", session.id),
+        ));
+    }
+    persist_to_path(&path, &store)?;
+    Ok((path, store.revision))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,5 +494,81 @@ mod tests {
             load_from_path(&path).expect_err("future schema").kind(),
             io::ErrorKind::InvalidData
         );
+    }
+
+    #[test]
+    fn linked_worktree_comments_share_the_common_store_without_replacing_agent_comments() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let common = dir.path().join("main.git");
+        let admin = common.join("worktrees/review-one");
+        let worktree = dir.path().join("review-one");
+        fs::create_dir_all(&admin).expect("admin dir");
+        fs::create_dir_all(&worktree).expect("worktree dir");
+        fs::write(
+            worktree.join(".git"),
+            "gitdir: ../main.git/worktrees/review-one\n",
+        )
+        .expect("gitdir pointer");
+        fs::write(admin.join("commondir"), "../..\n").expect("commondir pointer");
+
+        let canonical_common = fs::canonicalize(&common).expect("canonical common dir");
+        assert_eq!(
+            resolve_git_common_dir(&worktree).expect("resolve"),
+            canonical_common
+        );
+
+        let first = comment("agent-comment");
+        let (path, first_revision) =
+            persist_comment_for_workdir(&worktree, session("ab-session"), first)
+                .expect("first comment");
+        assert_eq!(path, canonical_common.join("gitcomet/reviews-v1.json"));
+
+        let mut second = comment("ui-comment");
+        second.body = "Comment from the diff UI".into();
+        let (_, second_revision) =
+            persist_comment_for_workdir(&worktree, session("ab-session"), second)
+                .expect("second comment");
+        assert!(second_revision > first_revision);
+
+        let saved = load_from_path(&path).expect("load shared store");
+        assert_eq!(saved.sessions.len(), 1);
+        assert_eq!(saved.sessions[0].comments.len(), 2);
+        assert!(
+            saved.sessions[0]
+                .comments
+                .iter()
+                .any(|comment| comment.id == "agent-comment")
+        );
+        assert!(
+            saved.sessions[0]
+                .comments
+                .iter()
+                .any(|comment| comment.id == "ui-comment")
+        );
+    }
+
+    #[test]
+    fn submodule_gitfile_stores_reviews_in_the_module_admin_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let module_admin = dir.path().join("super/.git/modules/child");
+        let submodule = dir.path().join("super/child");
+        fs::create_dir_all(&module_admin).expect("module admin dir");
+        fs::create_dir_all(&submodule).expect("submodule worktree");
+        fs::write(submodule.join(".git"), "gitdir: ../.git/modules/child\n")
+            .expect("submodule gitdir pointer");
+
+        let canonical_admin = fs::canonicalize(&module_admin).expect("canonical module admin");
+        assert_eq!(
+            resolve_git_common_dir(&submodule).expect("resolve submodule"),
+            canonical_admin
+        );
+        let (path, revision) = persist_comment_for_workdir(
+            &submodule,
+            session("submodule-review"),
+            comment("submodule-comment"),
+        )
+        .expect("persist submodule comment");
+        assert_eq!(path, canonical_admin.join("gitcomet/reviews-v1.json"));
+        assert_eq!(revision, 2);
     }
 }

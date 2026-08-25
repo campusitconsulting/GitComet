@@ -164,6 +164,7 @@ pub(super) fn effect_name(effect: &Effect) -> &'static str {
         Effect::LoadMergeCommitMessage { .. } => "LoadMergeCommitMessage",
         Effect::PersistSession { .. } => "PersistSession",
         Effect::PersistRecentRepo { .. } => "PersistRecentRepo",
+        Effect::PersistLocalReviewComment { .. } => "PersistLocalReviewComment",
         _ => "Effect",
     }
 }
@@ -196,6 +197,7 @@ pub(super) fn effect_repo_id(effect: &Effect) -> Option<RepoId> {
         Effect::PersistRepoHistoryMode { repo_id, .. } => *repo_id,
         Effect::PersistRepoHistoryModesBatch { repo_id, .. } => *repo_id,
         Effect::PersistRepoHistoryAuthorFilter { repo_id, .. } => *repo_id,
+        Effect::PersistLocalReviewComment { repo_id, .. } => Some(*repo_id),
         _ => None,
     }
 }

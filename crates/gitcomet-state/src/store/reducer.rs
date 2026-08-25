@@ -7,9 +7,9 @@ mod repo_management;
 mod util;
 
 use crate::model::{
-    AppState, AuthPromptState, AuthRetryOperation, BannerErrorState, PendingCommitRetry, RepoId,
-    SubmoduleAddProgressState, SubmoduleTrustCheckOperation, SubmoduleTrustCheckState,
-    SubmoduleTrustPromptOperation, SubmoduleTrustPromptState,
+    AppNotificationKind, AppState, AuthPromptState, AuthRetryOperation, BannerErrorState,
+    PendingCommitRetry, RepoId, SubmoduleAddProgressState, SubmoduleTrustCheckOperation,
+    SubmoduleTrustCheckState, SubmoduleTrustPromptOperation, SubmoduleTrustPromptState,
 };
 use crate::msg::{ConflictRegionChoice, Effect, Msg, RepoCommandKind, RepoPath, RepoPathList};
 use crate::store::repo_load_trace;
@@ -891,6 +891,28 @@ fn reduce_inner(
             );
             Vec::new()
         }
+        Msg::Internal(crate::msg::InternalMsg::LocalReviewCommentPersisted {
+            repo_id: _,
+            session_id,
+            comment_id,
+            result,
+        }) => {
+            match result {
+                Ok((_path, revision)) => util::push_notification(
+                    state,
+                    AppNotificationKind::Success,
+                    format!(
+                        "Local review comment saved ({session_id}, {comment_id}, revision {revision})."
+                    ),
+                ),
+                Err(error) => util::push_notification(
+                    state,
+                    AppNotificationKind::Error,
+                    format!("Failed to save local review comment: {error}"),
+                ),
+            }
+            Vec::new()
+        }
         Msg::ReloadRepo { repo_id } => external_and_history::reload_repo(state, repo_id),
         Msg::RepoActivated { .. } => Vec::new(),
         Msg::RepoExternallyChanged { repo_id, change } => {
@@ -1006,6 +1028,17 @@ fn reduce_inner(
         Msg::RemoveNamedComparison { repo_id, name } => {
             effects::remove_named_comparison(state, repo_id, name)
         }
+        Msg::AddLocalReviewComment {
+            repo_id,
+            workdir,
+            session,
+            comment,
+        } => vec![Effect::PersistLocalReviewComment {
+            repo_id,
+            workdir,
+            session,
+            comment,
+        }],
         Msg::SelectDiff { repo_id, target } => diff_selection::select_diff(state, repo_id, target),
         Msg::OpenInlineSubmoduleDiff {
             repo_id,
@@ -3583,7 +3616,7 @@ mod comparison_tests {
         let repo_id = RepoId(1);
         let mut state = state_with_log(repo_id);
 
-        dispatch_effects(
+        let save_effects = dispatch_effects(
             &mut state,
             Msg::AddNamedComparison {
                 repo_id,
@@ -3592,6 +3625,11 @@ mod comparison_tests {
                 b: endpoint("c2", "old feature"),
             },
         );
+        assert!(save_effects.iter().any(|effect| matches!(
+            effect,
+            Effect::PersistSession { repo_id: persisted_repo_id, .. }
+                if *persisted_repo_id == Some(repo_id)
+        )));
         dispatch_effects(
             &mut state,
             Msg::AddNamedComparison {
@@ -3627,6 +3665,11 @@ mod comparison_tests {
             Effect::LoadRangeFiles { from, to, .. }
                 if *from == CommitId("c1".into()) && *to == Some(CommitId("c3".into()))
         )));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::PersistSession { repo_id: persisted_repo_id, .. }
+                if *persisted_repo_id == Some(repo_id)
+        )));
 
         dispatch_effects(
             &mut state,
@@ -3661,13 +3704,18 @@ mod comparison_tests {
         );
         let open_range = repo(&state, repo_id).history_state.range_selection.clone();
 
-        dispatch_effects(
+        let remove_effects = dispatch_effects(
             &mut state,
             Msg::RemoveNamedComparison {
                 repo_id,
                 name: " review ".into(),
             },
         );
+        assert!(remove_effects.iter().any(|effect| matches!(
+            effect,
+            Effect::PersistSession { repo_id: persisted_repo_id, .. }
+                if *persisted_repo_id == Some(repo_id)
+        )));
 
         let r = repo(&state, repo_id);
         assert!(r.comparison_shelf.named.is_empty());

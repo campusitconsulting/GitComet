@@ -13,6 +13,18 @@ impl std::fmt::Debug for InternalMsg {
                 .field("action", action)
                 .field("error", error)
                 .finish(),
+            InternalMsg::LocalReviewCommentPersisted {
+                repo_id,
+                session_id,
+                comment_id,
+                result,
+            } => f
+                .debug_struct("LocalReviewCommentPersisted")
+                .field("repo_id", repo_id)
+                .field("session_id", session_id)
+                .field("comment_id", comment_id)
+                .field("ok", &result.is_ok())
+                .finish(),
             InternalMsg::CloneRepoProgress { dest, line } => f
                 .debug_struct("CloneRepoProgress")
                 .field("dest", dest)

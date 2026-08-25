@@ -303,6 +303,15 @@ pub enum Msg {
         repo_id: RepoId,
         name: String,
     },
+    /// Persist one provider-independent line comment for the current A/B
+    /// review. Filesystem work is performed by an effect, never by the UI or
+    /// reducer thread.
+    AddLocalReviewComment {
+        repo_id: RepoId,
+        workdir: PathBuf,
+        session: crate::local_review::LocalReviewSession,
+        comment: crate::local_review::ReviewComment,
+    },
     SelectDiff {
         repo_id: RepoId,
         target: DiffTarget,
@@ -1010,6 +1019,12 @@ pub enum InternalMsg {
         repo_id: Option<RepoId>,
         action: &'static str,
         error: String,
+    },
+    LocalReviewCommentPersisted {
+        repo_id: RepoId,
+        session_id: String,
+        comment_id: String,
+        result: Result<(PathBuf, u64), String>,
     },
     CloneRepoProgress {
         dest: Arc<PathBuf>,

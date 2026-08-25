@@ -1,6 +1,7 @@
 use super::*;
 use crate::model::{
-    GitLogSettings, GitLogTagFetchMode, RepoLoadsInFlight, SidebarDataRequest, SidebarMode,
+    ComparisonMark, GitLogSettings, GitLogTagFetchMode, NamedComparison, RepoLoadsInFlight,
+    SidebarDataRequest, SidebarMode,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -461,6 +462,60 @@ fn assert_open_repo_history_mode_resolution(
         )),
         "expected RepoOpenedOk to request LoadLog({expected:?}), got {effects:?}"
     );
+}
+
+#[test]
+fn open_repo_restores_saved_named_comparisons_and_selected_pair() {
+    let mut repos: FxHashMap<RepoId, Arc<dyn GitRepository>> = FxHashMap::default();
+    let id_alloc = AtomicU64::new(1);
+    let mut state = AppState::default();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo_path = dir.path().join("repo");
+    let session_file = dir.path().join("session.json");
+    std::fs::create_dir_all(&repo_path).expect("create repo path");
+    let normalized_repo_path = super::reducer::normalize_repo_path(repo_path.clone());
+
+    let a = ComparisonMark {
+        commit_id: CommitId(Arc::from("1111111")),
+        label: "main".to_string(),
+    };
+    let b = ComparisonMark {
+        commit_id: CommitId(Arc::from("2222222")),
+        label: "feature".to_string(),
+    };
+    let mut persisted_state = AppState::default();
+    let mut persisted_repo = RepoState::new_opening(
+        RepoId(99),
+        RepoSpec {
+            workdir: normalized_repo_path,
+        },
+    );
+    persisted_repo.comparison_shelf.named.push(NamedComparison {
+        name: "review".to_string(),
+        a: a.clone(),
+        b: b.clone(),
+    });
+    persisted_repo.comparison_shelf.a = Some(a.clone());
+    persisted_repo.comparison_shelf.b = Some(b.clone());
+    persisted_repo.comparison_shelf.selected_name = Some("review".to_string());
+    persisted_state.repos.push(persisted_repo);
+    persisted_state.active_repo = Some(RepoId(99));
+    crate::session::persist_from_state_to_path(&persisted_state, &session_file)
+        .expect("persist named comparison");
+
+    let _session_file_override =
+        crate::session::push_test_session_file_path_override(Some(session_file));
+    reduce(&mut repos, &id_alloc, &mut state, Msg::OpenRepo(repo_path));
+
+    let repo = &state.repos[0];
+    assert_eq!(repo.comparison_shelf.named.len(), 1);
+    assert_eq!(
+        repo.comparison_shelf.selected_name.as_deref(),
+        Some("review")
+    );
+    assert_eq!(repo.comparison_shelf.a, Some(a.clone()));
+    assert_eq!(repo.comparison_shelf.b, Some(b));
+    assert_eq!(repo.comparison_mark, Some(a));
 }
 
 #[test]

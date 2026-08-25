@@ -206,6 +206,7 @@ fn effect_requires_available_git(effect: &Effect) -> bool {
             | Effect::PersistRecentRepo { .. }
             | Effect::PersistRepoHistoryMode { .. }
             | Effect::PersistRepoHistoryModesBatch { .. }
+            | Effect::PersistLocalReviewComment { .. }
             | Effect::CancelRepoLoads { .. }
             | Effect::AbortCloneRepo { .. }
     )
@@ -247,6 +248,7 @@ fn send_unavailable_git_effect_result(
         | Effect::PersistRepoHistoryMode { .. }
         | Effect::PersistRepoHistoryModesBatch { .. }
         | Effect::PersistRepoHistoryAuthorFilter { .. }
+        | Effect::PersistLocalReviewComment { .. }
         | Effect::CancelRepoLoads { .. } => {}
         Effect::OpenRepo { repo_id, path } => {
             send(Msg::Internal(crate::msg::InternalMsg::RepoOpenedErr {
@@ -1361,6 +1363,29 @@ pub(super) fn schedule_effect(
                         }),
                     );
                 }
+            });
+        }
+        Effect::PersistLocalReviewComment {
+            repo_id,
+            workdir,
+            session,
+            comment,
+        } => {
+            let session_id = session.id.clone();
+            let comment_id = comment.id.clone();
+            session_persist_executor.spawn(move || {
+                let result =
+                    crate::local_review::persist_comment_for_workdir(&workdir, session, comment)
+                        .map_err(|error| error.to_string());
+                util::send_or_log(
+                    &msg_tx,
+                    Msg::Internal(crate::msg::InternalMsg::LocalReviewCommentPersisted {
+                        repo_id,
+                        session_id,
+                        comment_id,
+                        result,
+                    }),
+                );
             });
         }
         Effect::PersistRecentRepo {

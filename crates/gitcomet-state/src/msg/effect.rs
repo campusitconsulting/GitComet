@@ -31,6 +31,12 @@ pub enum Effect {
         updates: Vec<(PathBuf, HistoryMode)>,
         action: &'static str,
     },
+    PersistLocalReviewComment {
+        repo_id: RepoId,
+        workdir: PathBuf,
+        session: crate::local_review::LocalReviewSession,
+        comment: crate::local_review::ReviewComment,
+    },
     PersistRepoHistoryAuthorFilter {
         repo_id: Option<RepoId>,
         workdir: PathBuf,

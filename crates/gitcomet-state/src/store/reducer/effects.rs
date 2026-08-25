@@ -1074,22 +1074,24 @@ pub(super) fn mark_for_comparison(
     commit_id: CommitId,
     label: String,
 ) -> Vec<Effect> {
-    if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
-        let endpoint = ComparisonMark { commit_id, label };
-        repo_state.comparison_mark = Some(endpoint.clone());
-        repo_state.comparison_shelf.a = Some(endpoint);
-        repo_state.comparison_shelf.selected_name = None;
-    }
-    Vec::new()
+    let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
+        return Vec::new();
+    };
+    let endpoint = ComparisonMark { commit_id, label };
+    repo_state.comparison_mark = Some(endpoint.clone());
+    repo_state.comparison_shelf.a = Some(endpoint);
+    repo_state.comparison_shelf.selected_name = None;
+    vec![persist_comparison_shelf_effect(repo_id)]
 }
 
 pub(super) fn clear_comparison_mark(state: &mut AppState, repo_id: RepoId) -> Vec<Effect> {
-    if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
-        repo_state.comparison_mark = None;
-        repo_state.comparison_shelf.a = None;
-        repo_state.comparison_shelf.selected_name = None;
-    }
-    Vec::new()
+    let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
+        return Vec::new();
+    };
+    repo_state.comparison_mark = None;
+    repo_state.comparison_shelf.a = None;
+    repo_state.comparison_shelf.selected_name = None;
+    vec![persist_comparison_shelf_effect(repo_id)]
 }
 
 pub(super) fn set_comparison_slot(
@@ -1109,7 +1111,7 @@ pub(super) fn set_comparison_slot(
         ComparisonSlot::B => repo_state.comparison_shelf.b = Some(endpoint),
     }
     repo_state.comparison_shelf.selected_name = None;
-    Vec::new()
+    vec![persist_comparison_shelf_effect(repo_id)]
 }
 
 pub(super) fn clear_comparison_slot(
@@ -1128,7 +1130,7 @@ pub(super) fn clear_comparison_slot(
         ComparisonSlot::B => repo_state.comparison_shelf.b = None,
     }
     repo_state.comparison_shelf.selected_name = None;
-    Vec::new()
+    vec![persist_comparison_shelf_effect(repo_id)]
 }
 
 pub(super) fn swap_comparison_slots(state: &mut AppState, repo_id: RepoId) -> Vec<Effect> {
@@ -1141,7 +1143,14 @@ pub(super) fn swap_comparison_slots(state: &mut AppState, repo_id: RepoId) -> Ve
     );
     repo_state.comparison_mark = repo_state.comparison_shelf.a.clone();
     repo_state.comparison_shelf.selected_name = None;
-    Vec::new()
+    vec![persist_comparison_shelf_effect(repo_id)]
+}
+
+fn persist_comparison_shelf_effect(repo_id: RepoId) -> Effect {
+    Effect::PersistSession {
+        repo_id: Some(repo_id),
+        action: "updating saved comparisons",
+    }
 }
 
 pub(super) fn add_named_comparison(
@@ -1173,7 +1182,7 @@ pub(super) fn add_named_comparison(
     } else {
         repo_state.comparison_shelf.named.push(pair);
     }
-    Vec::new()
+    vec![persist_comparison_shelf_effect(repo_id)]
 }
 
 pub(super) fn select_named_comparison(
@@ -1204,7 +1213,7 @@ pub(super) fn select_named_comparison(
         repo_state.comparison_mark = Some(pair.a.clone());
     }
 
-    compare_range(
+    let mut effects = compare_range(
         state,
         repo_id,
         pair.a.commit_id,
@@ -1212,7 +1221,9 @@ pub(super) fn select_named_comparison(
         pair.a.label,
         pair.b.label,
         ComparisonSource::Explicit,
-    )
+    );
+    effects.push(persist_comparison_shelf_effect(repo_id));
+    effects
 }
 
 pub(super) fn remove_named_comparison(
@@ -1224,6 +1235,7 @@ pub(super) fn remove_named_comparison(
     let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
         return Vec::new();
     };
+    let old_len = repo_state.comparison_shelf.named.len();
     repo_state
         .comparison_shelf
         .named
@@ -1231,7 +1243,11 @@ pub(super) fn remove_named_comparison(
     if repo_state.comparison_shelf.selected_name.as_deref() == Some(name) {
         repo_state.comparison_shelf.selected_name = None;
     }
-    Vec::new()
+    if repo_state.comparison_shelf.named.len() == old_len {
+        Vec::new()
+    } else {
+        vec![persist_comparison_shelf_effect(repo_id)]
+    }
 }
 
 /// Compare the marked point (base) against `commit_id` (tip). No-op when nothing

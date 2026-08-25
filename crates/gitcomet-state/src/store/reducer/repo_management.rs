@@ -388,6 +388,13 @@ pub(super) fn open_repo(id_alloc: &AtomicU64, state: &mut AppState, path: PathBu
         {
             repo_state.fetch_prune_deleted_remote_tracking_branches = enabled;
         }
+        if let Some(shelf) = session_preferences
+            .repo_comparison_shelves
+            .get(&workdir_key)
+        {
+            repo_state.comparison_shelf = shelf.clone();
+            repo_state.comparison_mark = shelf.a.clone();
+        }
         repo_state.last_active_at = Some(now);
         repo_state
     });
@@ -481,6 +488,13 @@ pub(super) fn restore_session(
                 .copied()
             {
                 repo_state.fetch_prune_deleted_remote_tracking_branches = enabled;
+            }
+            if let Some(shelf) = session_preferences
+                .repo_comparison_shelves
+                .get(&workdir_key)
+            {
+                repo_state.comparison_shelf = shelf.clone();
+                repo_state.comparison_mark = shelf.a.clone();
             }
             repo_state
         };
