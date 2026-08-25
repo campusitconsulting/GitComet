@@ -109,6 +109,27 @@ not claim a production fix: reproducing the screenshot discrepancy still needs
 the exact GitComet history scope, ordering/loading state and a screenshot that
 shows the affected SHA.
 
+### Existing worktree and submodule integration
+
+The fork does not need a second Git model for these objects:
+
+- every local branch that owns a listed worktree already receives an
+  interactive worktree badge in the branch tree;
+- the separate `Worktrees` section can be expanded for path-oriented browsing
+  or collapsed for a branch-oriented combined tree;
+- selecting a worktree reveals its checked-out commit and local-change row in
+  the shared history graph; double-click opens it as a repository tab;
+- submodules live in the same project sidebar, expose recorded/checked-out
+  revisions and status, and their changed pointer can be reviewed through the
+  existing inline submodule diff pipeline.
+
+The missing product controls are therefore small: an explicit switch for
+worktree badges versus the separate list, and honest date metadata. Git does
+not store a canonical branch creation date; the UI must label an earliest
+available reflog time as estimated and keep the branch tip-commit date distinct.
+Worktree creation can use filesystem birth time where supported, with a clearly
+labelled fallback rather than presenting an mtime as exact creation time.
+
 ## Next patches
 
 1. Placement-aware file-tree/diff resize and replacement of the graph column's
@@ -116,3 +137,8 @@ shows the affected SHA.
 2. A/B shelf UI over the comparison reducer, including named reusable pairs.
 3. Commit search/reveal and direct commit/range-diff gestures.
 4. Local review comment store and AI-agent exchange format.
+
+The v1 local JSON model and atomic storage contract are documented in
+[`local-review-protocol.md`](local-review-protocol.md). The remaining work is UI,
+reducer/effect wiring and a small CLI facade; the schema is already independent
+of any hosting provider.
