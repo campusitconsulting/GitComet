@@ -68,8 +68,13 @@ impl GixRepo {
                 commit_id,
                 path: Some(path),
             } => submodule_commit_diff_summary(&repo, commit_id, path),
+            DiffTarget::CommitRange {
+                from_commit_id,
+                to_commit_id: Some(to_commit_id),
+                path: Some(path),
+            } => submodule_commit_range_diff_summary(&repo, from_commit_id, to_commit_id, path),
             _ => Err(Error::new(ErrorKind::Unsupported(
-                "submodule summaries require a submodule working-tree target or committed submodule path",
+                "submodule summaries require a submodule working-tree target, committed submodule path, or commit-to-commit submodule range",
             ))),
         }
     }
@@ -774,6 +779,46 @@ fn submodule_commit_diff_summary(
         status: None,
         commit_id: Some(commit_id.clone()),
         parent_commit_id,
+        checked_out_head: None,
+        ranges,
+        live_staged: Vec::new(),
+        live_unstaged: Vec::new(),
+    })
+}
+
+fn submodule_commit_range_diff_summary(
+    repo: &gix::Repository,
+    from_commit_id: &CommitId,
+    to_commit_id: &CommitId,
+    path: &Path,
+) -> Result<SubmoduleDiffSummary> {
+    let from = gitlink_commit_id_at_revision(repo, from_commit_id.as_ref(), path)?;
+    let to = gitlink_commit_id_at_revision(repo, to_commit_id.as_ref(), path)?;
+
+    let nested_workdir = repo_workdir_for_submodule_trust(repo).join(path);
+    let nested_repo = open_gitlink_repo(repo, path)?;
+    let unavailable_reason = nested_repo
+        .is_none()
+        .then_some(SUBMODULE_HISTORY_UNAVAILABLE_REASON.to_string());
+    let ranges = vec![build_submodule_range(
+        &nested_workdir,
+        nested_repo.as_ref(),
+        SubmoduleDiffRangeKind::CommitHistory,
+        from,
+        to,
+        unavailable_reason,
+    )?];
+
+    Ok(SubmoduleDiffSummary {
+        path: path.to_path_buf(),
+        mode: SubmoduleDiffSummaryMode::CommitHistory,
+        status: None,
+        commit_id: Some(to_commit_id.clone()),
+        // In range mode this field is the explicitly selected base rather than
+        // the target commit's first parent. The UI already labels the range by
+        // its endpoints, and preserving both selections makes the summary
+        // useful even when they are on different branches.
+        parent_commit_id: Some(from_commit_id.clone()),
         checked_out_head: None,
         ranges,
         live_staged: Vec::new(),

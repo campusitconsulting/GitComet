@@ -384,7 +384,18 @@ fn diff_target_is_submodule(repo_state: &RepoState, target: &DiffTarget) -> bool
                 .iter()
                 .any(|file| file.path == *path && file.is_submodule)
         }
-        DiffTarget::Commit { path: None, .. } | DiffTarget::CommitRange { .. } => false,
+        DiffTarget::CommitRange {
+            path: Some(path), ..
+        } => repo_state
+            .history_state
+            .range_files
+            .ready()
+            .is_some_and(|files| {
+                files
+                    .iter()
+                    .any(|file| file.path == *path && file.is_submodule)
+            }),
+        DiffTarget::Commit { path: None, .. } | DiffTarget::CommitRange { path: None, .. } => false,
     }
 }
 

@@ -773,6 +773,99 @@ fn submodule_commit_summary_treats_missing_submodule_history_as_unavailable() {
 }
 
 #[test]
+fn submodule_commit_range_summary_uses_the_two_selected_parent_commits() {
+    let Some(_guard) = require_git_shell_for_submodule_tests() else {
+        return;
+    };
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let root = dir.path();
+
+    let sub_repo = root.join("sub");
+    let parent_repo = root.join("parent");
+    fs::create_dir_all(&sub_repo).expect("create sub repository directory");
+    fs::create_dir_all(&parent_repo).expect("create parent repository directory");
+    init_repo_with_seed(&sub_repo, "file.txt", "first\n", "seed submodule");
+    init_repo_with_seed(&parent_repo, "seed.txt", "seed\n", "seed parent");
+
+    let submodule_path = Path::new("mods/submodule");
+    add_submodule_raw(&parent_repo, &sub_repo, submodule_path, None);
+    run_git(
+        &parent_repo,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "add submodule",
+        ],
+    );
+    let from_parent = git_stdout(&parent_repo, &["rev-parse", "HEAD"]);
+
+    let nested_worktree = parent_repo.join(submodule_path);
+    run_git(
+        &nested_worktree,
+        &["config", "user.email", "you@example.com"],
+    );
+    run_git(&nested_worktree, &["config", "user.name", "You"]);
+    fs::write(nested_worktree.join("file.txt"), "first\nsecond\n").expect("update nested file");
+    run_git(&nested_worktree, &["add", "file.txt"]);
+    run_git(
+        &nested_worktree,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "advance nested history",
+        ],
+    );
+    run_git_with_path(&parent_repo, &["add", "--"], submodule_path);
+    run_git(
+        &parent_repo,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "advance submodule pointer",
+        ],
+    );
+    let to_parent = git_stdout(&parent_repo, &["rev-parse", "HEAD"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(&parent_repo).expect("open parent repository");
+    let summary = opened
+        .submodule_diff_summary(&DiffTarget::CommitRange {
+            from_commit_id: CommitId(from_parent.clone().into()),
+            to_commit_id: Some(CommitId(to_parent.clone().into())),
+            path: Some(submodule_path.to_path_buf()),
+        })
+        .expect("load arbitrary committed submodule range summary");
+
+    assert_eq!(
+        summary.commit_id.as_ref().map(|id| id.as_ref()),
+        Some(to_parent.as_str())
+    );
+    assert_eq!(
+        summary.parent_commit_id.as_ref().map(|id| id.as_ref()),
+        Some(from_parent.as_str())
+    );
+    let range = summary
+        .ranges
+        .iter()
+        .find(|range| range.kind == SubmoduleDiffRangeKind::CommitHistory)
+        .expect("summary should include selected commit history range");
+    assert_eq!(range.unavailable_reason, None);
+    assert!(
+        range
+            .changes
+            .iter()
+            .any(|change| change.path == PathBuf::from("file.txt")),
+        "nested file change should be visible in the arbitrary parent range"
+    );
+}
+
+#[test]
 fn submodule_add_update_remove_round_trip() {
     let Some(_guard) = require_git_shell_for_submodule_tests() else {
         return;

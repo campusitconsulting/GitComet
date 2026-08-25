@@ -457,6 +457,59 @@ fn select_diff_for_staged_deleted_head_gitlink_loads_submodule_summary() {
 }
 
 #[test]
+fn select_diff_for_commit_range_gitlink_loads_rich_submodule_summary() {
+    let mut repos: FxHashMap<RepoId, Arc<dyn GitRepository>> = FxHashMap::default();
+    let id_alloc = AtomicU64::new(2);
+    let mut state = AppState::default();
+    let mut repo_state = RepoState::new_opening(
+        RepoId(1),
+        RepoSpec {
+            workdir: PathBuf::from("/tmp/repo"),
+        },
+    );
+    let path = PathBuf::from("vendor/submodule");
+    repo_state.set_range_files(Loadable::Ready(Arc::new(vec![CommitFileChange {
+        path: path.clone(),
+        kind: FileStatusKind::Modified,
+        is_submodule: true,
+        additions: None,
+        deletions: None,
+    }])));
+    let target = gitcomet_core::domain::DiffTarget::CommitRange {
+        from_commit_id: CommitId("aaaaaaaa".into()),
+        to_commit_id: Some(CommitId("bbbbbbbb".into())),
+        path: Some(path),
+    };
+    state.repos.push(repo_state);
+    state.active_repo = Some(RepoId(1));
+
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SelectDiff {
+            repo_id: RepoId(1),
+            target,
+        },
+    );
+
+    let repo_state = state.repos.first().expect("repo state to exist");
+    assert!(matches!(repo_state.diff_state.diff, Loadable::NotLoaded));
+    assert!(repo_state.diff_state.submodule_summary.is_loading());
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::LoadSelectedDiff {
+            repo_id: RepoId(1),
+            load_patch_diff: false,
+            load_file_text: false,
+            preview_text_side: None,
+            load_file_image: false,
+            load_submodule_summary: true,
+        }]
+    ));
+}
+
+#[test]
 fn select_diff_for_deleted_commit_file_skips_patch_diff_and_loads_file_preview() {
     let mut repos: FxHashMap<RepoId, Arc<dyn GitRepository>> = FxHashMap::default();
     let id_alloc = AtomicU64::new(2);
