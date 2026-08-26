@@ -1498,8 +1498,17 @@ fn commit_details_reports_merge_parents_and_file_changes() {
     );
     assert_eq!(merge_details.parent_ids.len(), 2);
     assert!(
-        merge_details.files.is_empty(),
-        "merge commit details should match `git show` and omit file rows without `-m`"
+        merge_details.files.iter().any(|f| {
+            f.path.as_path() == Path::new("feature.txt") && f.kind == FileStatusKind::Added
+        }),
+        "merge details should show changes introduced relative to the first parent"
+    );
+    assert!(
+        merge_details
+            .files
+            .iter()
+            .all(|f| f.path.as_path() != Path::new("main.txt")),
+        "files already present in the first parent must not appear in its merge diff"
     );
     assert!(
         feature_details.files.iter().any(|f| {

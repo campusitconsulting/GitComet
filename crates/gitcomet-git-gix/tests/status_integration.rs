@@ -1871,6 +1871,52 @@ fn diff_file_commit_target_without_path_returns_none() {
 }
 
 #[test]
+fn diff_unified_merge_commit_uses_first_parent() {
+    if !require_git_shell_for_status_integration_tests() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init", "-b", "main"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "base.txt", "base\n");
+    run_git(repo, &["add", "base.txt"]);
+    run_git(repo, &["commit", "-m", "base"]);
+
+    run_git(repo, &["checkout", "-b", "feature"]);
+    write(repo, "feature.txt", "from feature\n");
+    run_git(repo, &["add", "feature.txt"]);
+    run_git(repo, &["commit", "-m", "feature"]);
+
+    run_git(repo, &["checkout", "main"]);
+    write(repo, "main.txt", "from main\n");
+    run_git(repo, &["add", "main.txt"]);
+    run_git(repo, &["commit", "-m", "main"]);
+    run_git(repo, &["merge", "--no-ff", "feature", "-m", "merge"]);
+
+    let merge_id = run_git_output(repo, &["rev-parse", "HEAD"]);
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let unified = opened
+        .diff_unified(&DiffTarget::Commit {
+            commit_id: CommitId(merge_id.into()),
+            path: None,
+        })
+        .unwrap();
+
+    assert!(unified.contains("feature.txt"), "merge patch: {unified}");
+    assert!(unified.contains("from feature"), "merge patch: {unified}");
+    assert!(
+        !unified.contains("main.txt"),
+        "first-parent diff must not include files already on main: {unified}"
+    );
+}
+
+#[test]
 fn diff_unified_outside_repository_path_returns_structured_git_error() {
     if !require_git_shell_for_status_integration_tests() {
         return;

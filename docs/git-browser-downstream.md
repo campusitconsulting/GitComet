@@ -225,6 +225,10 @@ The same global auto-open option opens a commit's complete parent diff on a
 plain history-row click. Clicking `Uncommitted changes` or a linked worktree's
 `Worktree changes` builds `HEAD → live worktree` in A/B and snapshots its full
 staged, unstaged and untracked state through the existing comparison pipeline.
+For a merge commit, the plain-click commit diff consistently uses its first
+parent as the mainline base. This applies to both the file list and the unified
+patch (`git show -m --first-parent`), avoiding Git's often-empty default combined
+merge diff while keeping per-file text and image previews on the same parent.
 A and B are painted as independent blue/orange chips on their commit or
 worktree rows, so either endpoint remains visible before the pair is complete.
 

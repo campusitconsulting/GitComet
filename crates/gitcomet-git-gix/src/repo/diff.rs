@@ -65,6 +65,13 @@ impl GixRepo {
             }
             DiffTarget::Commit { commit_id, path } => {
                 cmd.arg("show")
+                    // A plain `git show` uses combined-diff semantics for a
+                    // merge and commonly emits no patch at all. The rest of
+                    // `DiffTarget::Commit` (file text/image previews) already
+                    // compares against the first parent, so make the whole
+                    // patch follow that same, useful mainline interpretation.
+                    .arg("-m")
+                    .arg("--first-parent")
                     .arg("--no-ext-diff")
                     .arg("--pretty=format:")
                     .arg(commit_id.as_ref());

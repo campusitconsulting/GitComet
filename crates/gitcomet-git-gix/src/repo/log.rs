@@ -520,13 +520,13 @@ fn commit_file_changes(
     commit: &gix::Commit<'_>,
     parent_ids: &[gix::ObjectId],
 ) -> Result<Vec<CommitFileChange>> {
-    if parent_ids.len() > 1 {
-        return Ok(Vec::new());
-    }
-
     let commit_tree = commit
         .tree()
         .map_err(|e| Error::new(ErrorKind::Backend(format!("gix commit tree: {e}"))))?;
+    // A commit details view has one flat file list. For a merge, use its first
+    // parent as the mainline base, matching `DiffTarget::Commit`'s unified
+    // patch and per-file text/image paths. Returning no files merely because a
+    // second parent exists made every clean merge appear to have no changes.
     let parent_tree = parent_ids
         .first()
         .map(|&id| {
