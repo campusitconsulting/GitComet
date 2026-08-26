@@ -214,6 +214,9 @@ picker rows, and history rows use the same compact blue `A` and orange `B`
 badges. Their fill is deliberately light so endpoint state does not compete
 with row selection or graph-lane highlighting. In the endpoint picker this
 badge replaces the generic selected-row check rather than duplicating it.
+The manually painted `All branches` ref column matches those component badges'
+18 px geometry, 5 px corner radius and semibold type instead of treating A/B as
+generic extra-small ref chips.
 
 The same global auto-open option opens a commit's complete parent diff on a
 plain history-row click. Clicking `Uncommitted changes` or a linked worktree's

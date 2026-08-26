@@ -485,6 +485,9 @@ pub(super) fn history_commit_row_canvas(
             let xxs_line_height = base_style
                 .line_height
                 .to_pixels(xxs_font.into(), window.rem_size());
+            let mut comparison_badge_style = base_style.clone();
+            comparison_badge_style.font_weight = gpui::FontWeight::SEMIBOLD;
+            let comparison_badge_line_height = scaled_px(14.0);
             let cell_pad_x = scaled_px(HISTORY_COL_HANDLE_PX / 2.0);
 
             let center_y = |line_height: Pixels| {
@@ -763,6 +766,12 @@ pub(super) fn history_commit_row_canvas(
                             .chain(branch_entries);
 
                         for entry in entries {
+                            let is_comparison = matches!(&entry, ChipEntry::Comparison(_, _));
+                            let entry_pad_x = if is_comparison {
+                                scaled_px(5.0)
+                            } else {
+                                chip_pad_x
+                            };
                             let pending_after = total_chips - shown - 1;
                             let reserve = if pending_after > 0 {
                                 overflow_reserve
@@ -770,7 +779,7 @@ pub(super) fn history_commit_row_canvas(
                                 px(0.0)
                             };
                             let max_text_w =
-                                branch_content_bounds.right() - x - reserve - chip_pad_x * 2.0;
+                                branch_content_bounds.right() - x - reserve - entry_pad_x * 2.0;
                             // Later chips need enough room to be legible;
                             // otherwise fold the remainder into the "+N" chip
                             // instead of painting an "…x" stub.
@@ -787,8 +796,8 @@ pub(super) fn history_commit_row_canvas(
                                 ChipEntry::Comparison(label, style_kind) => (
                                     shape_truncated_line_cached(
                                         window,
-                                        &base_style,
-                                        xxs_font,
+                                        &comparison_badge_style,
+                                        xs_font,
                                         label,
                                         fx_hash_str(label.as_ref()),
                                         max_text_w,
@@ -837,20 +846,39 @@ pub(super) fn history_commit_row_canvas(
                                 }
                             };
 
-                            let chip_w = shaped.width + chip_pad_x * 2.0;
+                            let chip_w = (shaped.width + entry_pad_x * 2.0).max(if is_comparison {
+                                scaled_px(18.0)
+                            } else {
+                                px(0.0)
+                            });
                             let chip_bounds =
                                 Bounds::new(point(x, chip_y), size(chip_w, chip_height));
                             let visual = history_chip_visual(theme, style_kind);
+                            let entry_radius = if is_comparison {
+                                scaled_px(5.0)
+                            } else {
+                                chip_radius
+                            };
+                            let entry_line_height = if is_comparison {
+                                comparison_badge_line_height
+                            } else {
+                                xxs_line_height
+                            };
+                            let paint_pad_x = if is_comparison {
+                                (chip_w - shaped.width) * 0.5
+                            } else {
+                                entry_pad_x
+                            };
                             paint_history_chip(
                                 window,
                                 cx,
                                 chip_bounds,
                                 &visual,
                                 &shaped,
-                                chip_radius,
+                                entry_radius,
                                 chip_border_w,
-                                chip_pad_x,
-                                xxs_line_height,
+                                paint_pad_x,
+                                entry_line_height,
                             );
                             if is_tag {
                                 tag_chip_bounds.push(chip_bounds);
