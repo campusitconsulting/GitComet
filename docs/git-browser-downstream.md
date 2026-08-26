@@ -179,8 +179,10 @@ The shelf currently reuses the production `CompareCommitRange` reducer and
 local branch tips, remote branch tips, tags, or the checked-out HEADs of two
 linked worktrees is a real Git range comparison rather than a UI-only bookmark.
 Selecting `Open diff` loads both the changed-file list and the whole-range patch
-through the normal cancellable diff pipeline. Selecting a file then narrows the
-patch to that path.
+through the normal cancellable diff pipeline. With `Settings > Diff > Open diff
+when selection changes` enabled (the default), choosing the second distinct A/B
+endpoint performs the same action immediately. Selecting a file then narrows
+the patch to that path.
 
 Worktree row menus expose both `Set worktree HEAD as comparison A/B` and
 `Set worktree working state as comparison A/B` directly.
@@ -199,6 +201,13 @@ worktree states and history commits in one sectioned list; full OIDs and commit
 summaries are searchable.
 Context-menu actions remain as a faster route when the desired object is
 already under the pointer.
+
+The same global auto-open option opens a commit's complete parent diff on a
+plain history-row click. Clicking `Uncommitted changes` or a linked worktree's
+`Worktree changes` builds `HEAD → live worktree` in A/B and snapshots its full
+staged, unstaged and untracked state through the existing comparison pipeline.
+A and B are painted as independent blue/orange chips on their commit or
+worktree rows, so either endpoint remains visible before the pair is complete.
 
 Named pairs are persisted per repository path in `session.json`. Selecting a
 saved pair restores A, B and the active comparison after restart while an

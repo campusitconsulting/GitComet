@@ -5706,6 +5706,7 @@ pub struct GitCometView {
     pub(super) diff_reveal_whitespace_chars: bool,
     pub(super) diff_word_wrap: bool,
     pub(super) diff_show_line_numbers: bool,
+    pub(super) auto_open_diff_on_selection: bool,
     pub(super) auto_save_file_edits: bool,
     pub(super) ui_scale_percent: u32,
 

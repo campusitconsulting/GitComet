@@ -225,6 +225,9 @@ impl GitCometView {
                             ),
                             diff_word_wrap: Some(this.diff_word_wrap),
                             diff_show_line_numbers: Some(this.diff_show_line_numbers),
+                            auto_open_diff_on_selection: Some(
+                                this.auto_open_diff_on_selection,
+                            ),
                             // Auto-save is only ever changed from the settings
                             // window; the main window mirrors it to drive the
                             // editor, so None keeps the stored value.

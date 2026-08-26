@@ -112,6 +112,8 @@ fn shape_truncated_line_cached_from(
 #[derive(Clone, Copy)]
 enum HistoryChipStyleKind {
     Tag,
+    ComparisonA,
+    ComparisonB,
     Head,
     Branch { selected: bool },
 }
@@ -128,6 +130,16 @@ fn history_chip_visual(theme: AppTheme, kind: HistoryChipStyleKind) -> HistoryCh
             border: with_alpha(theme.colors.accent.foreground, 0.35),
             bg: with_alpha(theme.colors.accent.foreground, 0.12),
             text: theme.colors.accent.foreground,
+        },
+        HistoryChipStyleKind::ComparisonA => HistoryChipVisual {
+            border: with_alpha(theme.colors.accent.foreground, 0.90),
+            bg: with_alpha(theme.colors.accent.foreground, 0.22),
+            text: theme.colors.accent.foreground,
+        },
+        HistoryChipStyleKind::ComparisonB => HistoryChipVisual {
+            border: with_alpha(theme.colors.status.warning.foreground, 0.90),
+            bg: with_alpha(theme.colors.status.warning.foreground, 0.20),
+            text: theme.colors.status.warning.foreground,
         },
         // The HEAD chip carries no selection state: a ring around a pill that is
         // already a solid accent fill reads as a rendering artifact, not as a
@@ -378,6 +390,7 @@ pub(super) fn history_commit_row_canvas(
     graph_row_ix: usize,
     tag_names: Arc<[HistoryTextVm]>,
     ref_items: Arc<[HistoryRefListItem]>,
+    comparison_slots: u8,
     selected_branch: Option<SelectedHistoryBranch>,
     selected_lane: Option<super::history_graph_paint::SelectedLane>,
     lane_branch_name: Option<SharedString>,
@@ -622,7 +635,8 @@ pub(super) fn history_commit_row_canvas(
             // already say which branch they are, and a badge would collide with
             // their chips. This is the gap the feature fills -- the ref column
             // is empty on the great majority of rows.
-            if tag_names.is_empty()
+            if comparison_slots == 0
+                && tag_names.is_empty()
                 && branch_ref_count == 0
                 && hitbox.is_hovered(window)
                 && let Some(name) = lane_branch_name.as_ref()
@@ -659,7 +673,7 @@ pub(super) fn history_commit_row_canvas(
                 );
             }
 
-            if !tag_names.is_empty() || branch_ref_count > 0 {
+            if comparison_slots != 0 || !tag_names.is_empty() || branch_ref_count > 0 {
                 window.with_content_mask(
                     Some(ContentMask {
                         bounds: branch_content_bounds,
@@ -672,7 +686,9 @@ pub(super) fn history_commit_row_canvas(
                         let chip_y =
                             bounds.top() + (bounds.size.height - chip_height).max(px(0.0)) * 0.5;
                         let min_text_w = scaled_px(12.0);
-                        let total_chips = tag_names.len() + branch_ref_count;
+                        let total_chips = comparison_slots.count_ones() as usize
+                            + tag_names.len()
+                            + branch_ref_count;
 
                         // Reserved width for a trailing "+N" chip; sized for the
                         // worst-case count so mid-loop reservations never come up short.
@@ -697,6 +713,7 @@ pub(super) fn history_commit_row_canvas(
                         let mut shown = 0usize;
 
                         enum ChipEntry<'a> {
+                            Comparison(SharedString, HistoryChipStyleKind),
                             Tag(&'a HistoryTextVm),
                             Ref(&'a HistoryRefListItem),
                         }
@@ -723,7 +740,25 @@ pub(super) fn history_commit_row_canvas(
                                 )
                             })
                             .map(ChipEntry::Ref);
-                        let entries = head_entries
+                        let comparison_entries = [
+                            (
+                                "A",
+                                HistoryChipStyleKind::ComparisonA,
+                                super::history::COMPARISON_SLOT_A_MASK,
+                            ),
+                            (
+                                "B",
+                                HistoryChipStyleKind::ComparisonB,
+                                super::history::COMPARISON_SLOT_B_MASK,
+                            ),
+                        ]
+                        .into_iter()
+                        .filter(move |(_, _, mask)| comparison_slots & mask != 0)
+                        .map(|(label, style, _)| {
+                            ChipEntry::Comparison(SharedString::from(label), style)
+                        });
+                        let entries = comparison_entries
+                            .chain(head_entries)
                             .chain(tag_names.iter().map(ChipEntry::Tag))
                             .chain(branch_entries);
 
@@ -749,6 +784,20 @@ pub(super) fn history_commit_row_canvas(
                             }
 
                             let (shaped, style_kind, is_tag) = match &entry {
+                                ChipEntry::Comparison(label, style_kind) => (
+                                    shape_truncated_line_cached(
+                                        window,
+                                        &base_style,
+                                        xxs_font,
+                                        label,
+                                        fx_hash_str(label.as_ref()),
+                                        max_text_w,
+                                        history_chip_visual(theme, *style_kind).text,
+                                        None,
+                                    ),
+                                    *style_kind,
+                                    false,
+                                ),
                                 ChipEntry::Tag(name) => (
                                     shape_truncated_line_cached(
                                         window,

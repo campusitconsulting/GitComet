@@ -93,6 +93,9 @@ pub struct UiSession {
     pub diff_reveal_whitespace_chars: Option<bool>,
     pub diff_word_wrap: Option<bool>,
     pub diff_show_line_numbers: Option<bool>,
+    /// Immediately opens the whole patch when selecting a commit, worktree
+    /// changes, or completing an A/B comparison pair.
+    pub auto_open_diff_on_selection: Option<bool>,
     pub auto_save_file_edits: Option<bool>,
     pub mergetool_auto_advance: Option<bool>,
     pub mergetool_collapse_unchanged: Option<bool>,
@@ -268,6 +271,7 @@ struct UiSessionFile {
     diff_reveal_whitespace_chars: Option<bool>,
     diff_word_wrap: Option<bool>,
     diff_show_line_numbers: Option<bool>,
+    auto_open_diff_on_selection: Option<bool>,
     auto_save_file_edits: Option<bool>,
     mergetool_auto_advance: Option<bool>,
     mergetool_collapse_unchanged: Option<bool>,
@@ -430,6 +434,7 @@ pub fn load_from_path(path: &Path) -> UiSession {
         diff_reveal_whitespace_chars: file.diff_reveal_whitespace_chars,
         diff_word_wrap: file.diff_word_wrap,
         diff_show_line_numbers: file.diff_show_line_numbers,
+        auto_open_diff_on_selection: file.auto_open_diff_on_selection,
         auto_save_file_edits: file.auto_save_file_edits,
         mergetool_auto_advance: file.mergetool_auto_advance,
         mergetool_collapse_unchanged: file.mergetool_collapse_unchanged,
@@ -929,6 +934,7 @@ pub struct UiSettings {
     pub diff_reveal_whitespace_chars: Option<bool>,
     pub diff_word_wrap: Option<bool>,
     pub diff_show_line_numbers: Option<bool>,
+    pub auto_open_diff_on_selection: Option<bool>,
     pub auto_save_file_edits: Option<bool>,
     pub mergetool_auto_advance: Option<bool>,
     pub mergetool_collapse_unchanged: Option<bool>,
@@ -1113,6 +1119,9 @@ pub fn persist_ui_settings_to_path(settings: UiSettings, path: &Path) -> io::Res
         }
         if let Some(value) = settings.diff_show_line_numbers {
             file.diff_show_line_numbers = Some(value);
+        }
+        if let Some(value) = settings.auto_open_diff_on_selection {
+            file.auto_open_diff_on_selection = Some(value);
         }
         if let Some(value) = settings.change_tracking_height {
             file.change_tracking_height = Some(value);
@@ -4699,6 +4708,7 @@ mod tests {
                 diff_reveal_whitespace_chars: Some(true),
                 diff_word_wrap: Some(true),
                 diff_show_line_numbers: Some(false),
+                auto_open_diff_on_selection: Some(true),
                 mergetool_show_line_numbers: Some(false),
                 mergetool_view_three_way: Some(false),
                 ..UiSettings::default()
@@ -4711,6 +4721,7 @@ mod tests {
         assert_eq!(loaded.diff_reveal_whitespace_chars, Some(true));
         assert_eq!(loaded.diff_word_wrap, Some(true));
         assert_eq!(loaded.diff_show_line_numbers, Some(false));
+        assert_eq!(loaded.auto_open_diff_on_selection, Some(true));
         assert_eq!(loaded.mergetool_show_line_numbers, Some(false));
         assert_eq!(loaded.mergetool_view_three_way, Some(false));
     }

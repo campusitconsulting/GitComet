@@ -163,6 +163,7 @@ pub(in super::super) struct PopoverHost {
     diff_reveal_whitespace_chars: bool,
     diff_word_wrap: bool,
     diff_show_line_numbers: bool,
+    auto_open_diff_on_selection: bool,
     _ui_model_subscription: gpui::Subscription,
     _repo_picker_search_input_subscription: Option<gpui::Subscription>,
     _branch_picker_search_input_subscription: Option<gpui::Subscription>,
@@ -1024,6 +1025,18 @@ fn choose_popover_anchor_corner(
 }
 
 impl PopoverHost {
+    pub(in super::super) fn set_auto_open_diff_on_selection(
+        &mut self,
+        next: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.auto_open_diff_on_selection == next {
+            return;
+        }
+        self.auto_open_diff_on_selection = next;
+        cx.notify();
+    }
+
     #[cfg(test)]
     pub(in crate::view) fn create_branch_input_focus_handle_for_test(
         &self,
@@ -1131,6 +1144,7 @@ impl PopoverHost {
         diff_reveal_whitespace_chars: bool,
         diff_word_wrap: bool,
         diff_show_line_numbers: bool,
+        auto_open_diff_on_selection: bool,
         root_view: WeakEntity<GitCometView>,
         root_view_mode: GitCometViewMode,
         tooltip_host: WeakEntity<TooltipHost>,
@@ -1718,6 +1732,7 @@ impl PopoverHost {
             diff_reveal_whitespace_chars,
             diff_word_wrap,
             diff_show_line_numbers,
+            auto_open_diff_on_selection,
             _ui_model_subscription: subscription,
             _repo_picker_search_input_subscription: None,
             _branch_picker_search_input_subscription: None,

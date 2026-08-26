@@ -289,6 +289,9 @@ pub enum Msg {
         repo_id: RepoId,
         slot: ComparisonSlot,
         endpoint: ComparisonMark,
+        /// Open the comparison immediately when this leaves two distinct
+        /// endpoints on the shelf.
+        auto_open: bool,
     },
     ClearComparisonSlot {
         repo_id: RepoId,

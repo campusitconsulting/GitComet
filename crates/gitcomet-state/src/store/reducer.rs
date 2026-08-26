@@ -1082,7 +1082,8 @@ fn reduce_inner(
             repo_id,
             slot,
             endpoint,
-        } => effects::set_comparison_slot(state, repo_id, slot, endpoint),
+            auto_open,
+        } => effects::set_comparison_slot(state, repo_id, slot, endpoint, auto_open),
         Msg::ClearComparisonSlot { repo_id, slot } => {
             effects::clear_comparison_slot(state, repo_id, slot)
         }
@@ -3736,6 +3737,7 @@ mod comparison_tests {
                 repo_id,
                 slot: ComparisonSlot::B,
                 endpoint: endpoint("c3", "feature"),
+                auto_open: false,
             },
         );
 
@@ -3771,6 +3773,7 @@ mod comparison_tests {
                 repo_id,
                 slot: ComparisonSlot::A,
                 endpoint: a.clone(),
+                auto_open: false,
             },
         );
         dispatch_effects(
@@ -3779,6 +3782,7 @@ mod comparison_tests {
                 repo_id,
                 slot: ComparisonSlot::B,
                 endpoint: b.clone(),
+                auto_open: false,
             },
         );
 
@@ -3804,6 +3808,46 @@ mod comparison_tests {
         let r = repo(&state, repo_id);
         assert_eq!(r.comparison_shelf.a, None);
         assert_eq!(r.comparison_mark, None);
+    }
+
+    #[test]
+    fn completing_an_ab_pair_auto_opens_the_whole_range_when_requested() {
+        let repo_id = RepoId(1);
+        let mut state = state_with_log(repo_id);
+
+        dispatch_effects(
+            &mut state,
+            Msg::SetComparisonSlot {
+                repo_id,
+                slot: ComparisonSlot::A,
+                endpoint: endpoint("c1", "base"),
+                auto_open: false,
+            },
+        );
+        let effects = dispatch_effects(
+            &mut state,
+            Msg::SetComparisonSlot {
+                repo_id,
+                slot: ComparisonSlot::B,
+                endpoint: endpoint("c3", "head"),
+                auto_open: true,
+            },
+        );
+
+        let repo = repo(&state, repo_id);
+        assert_eq!(
+            repo.diff_state.diff_target,
+            Some(DiffTarget::CommitRange {
+                from_commit_id: CommitId("c1".into()),
+                to_commit_id: Some(CommitId("c3".into())),
+                path: None,
+            })
+        );
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::LoadRangeFiles { from, to, .. }
+                if *from == CommitId("c1".into()) && *to == Some(CommitId("c3".into()))
+        )));
     }
 
     #[test]
@@ -3899,6 +3943,7 @@ mod comparison_tests {
                 repo_id,
                 slot: ComparisonSlot::B,
                 endpoint: endpoint("c2", "draft"),
+                auto_open: false,
             },
         );
         assert_eq!(repo(&state, repo_id).comparison_shelf.selected_name, None);

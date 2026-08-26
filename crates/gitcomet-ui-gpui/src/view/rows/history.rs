@@ -12,6 +12,7 @@ use crate::view::markdown_preview::{
 };
 use crate::view::panes::main::diff_search::DiffSearchMatcher;
 use crate::view::perf::{self, ViewPerfRenderLane, ViewPerfSpan};
+use gitcomet_state::model::{ComparisonEndpoint, ComparisonMark, ComparisonSlot};
 use gitcomet_state::msg::CommitSelectMode;
 use rustc_hash::FxHasher;
 
@@ -2965,6 +2966,12 @@ impl HistoryView {
                         list_ix,
                         repo.history_state.worktree_selection.as_deref()
                             == Some(summary.path.as_path()),
+                        comparison_slot_mask(
+                            &repo.comparison_shelf,
+                            &ComparisonEndpoint::WorktreeDirty {
+                                path: summary.path.clone(),
+                            },
+                        ),
                         (summary.added, summary.modified, summary.deleted),
                         summary,
                         cx,
@@ -2994,6 +3001,14 @@ impl HistoryView {
                         show_graph_color_marker,
                         repo.id,
                         selected,
+                        repo.spec.workdir.clone(),
+                        repo.head_commit_id(),
+                        comparison_slot_mask(
+                            &repo.comparison_shelf,
+                            &ComparisonEndpoint::WorktreeDirty {
+                                path: repo.spec.workdir.clone(),
+                            },
+                        ),
                         worktree_counts,
                         cx,
                     ));
@@ -3027,6 +3042,10 @@ impl HistoryView {
                 let selected = repo.history_state.selected_commit.as_ref() == Some(&commit.id)
                     || repo.history_state.multi_selection.is_multi()
                         && repo.history_state.multi_selection.contains(&commit.id);
+                let comparison_slots = comparison_slot_mask(
+                    &repo.comparison_shelf,
+                    &ComparisonEndpoint::Commit(commit.id.clone()),
+                );
                 let selected_branch = this.selected_branch_for_history_row(repo.id, selected);
                 let is_stash_node = base_row_vm.is_stash
                     || stash_ids
@@ -3062,6 +3081,7 @@ impl HistoryView {
                     connect_from_top_col,
                     Arc::clone(&decoration_row_vm.tag_names),
                     Arc::clone(&decoration_row_vm.ref_items),
+                    comparison_slots,
                     selected_branch,
                     selected_lane,
                     lane_branch_name,
@@ -3080,11 +3100,73 @@ impl HistoryView {
     }
 }
 
+pub(super) const COMPARISON_SLOT_A_MASK: u8 = 1;
+pub(super) const COMPARISON_SLOT_B_MASK: u8 = 2;
+
+fn comparison_slot_mask(
+    shelf: &gitcomet_state::model::ComparisonShelf,
+    endpoint: &ComparisonEndpoint,
+) -> u8 {
+    let mut mask = 0;
+    if shelf
+        .a
+        .as_ref()
+        .is_some_and(|mark| &mark.endpoint == endpoint)
+    {
+        mask |= COMPARISON_SLOT_A_MASK;
+    }
+    if shelf
+        .b
+        .as_ref()
+        .is_some_and(|mark| &mark.endpoint == endpoint)
+    {
+        mask |= COMPARISON_SLOT_B_MASK;
+    }
+    mask
+}
+
 /// Widest a worktree row's badge may grow before its branch label truncates.
 /// Matches the sidebar's branch-row worktree pill.
 const HISTORY_WORKTREE_BADGE_MAX_W_PX: f32 = 200.0;
 /// Matches the history table's ref chips so the badge sits on the same rhythm.
 const HISTORY_WORKTREE_BADGE_HEIGHT_PX: f32 = 18.0;
+
+fn comparison_slot_badges(
+    theme: AppTheme,
+    ui_scale: ui_scale::UiScale,
+    mask: u8,
+) -> Vec<AnyElement> {
+    [
+        (COMPARISON_SLOT_A_MASK, "A", theme.colors.accent.foreground),
+        (
+            COMPARISON_SLOT_B_MASK,
+            "B",
+            theme.colors.status.warning.foreground,
+        ),
+    ]
+    .into_iter()
+    .filter(|(slot, _, _)| mask & slot != 0)
+    .map(|(_, label, color)| {
+        div()
+            .flex_none()
+            .h(ui_scale.px(HISTORY_WORKTREE_BADGE_HEIGHT_PX))
+            .min_w(ui_scale.px(HISTORY_WORKTREE_BADGE_HEIGHT_PX))
+            .px(ui_scale.px(5.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(ui_scale.px(5.0))
+            .border_1()
+            .border_color(with_alpha(color, 0.90))
+            .bg(with_alpha(color, 0.20))
+            .text_xs()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(color)
+            .child(label)
+            .into_any_element()
+    })
+    .collect()
+}
 
 fn history_worktree_node_color_ix(
     graph_rows: Option<&[history_graph::GraphRow]>,
@@ -3154,6 +3236,7 @@ fn history_table_row(
     connect_from_top_col: Option<usize>,
     tag_names: Arc<[HistoryTextVm]>,
     ref_items: Arc<[HistoryRefListItem]>,
+    comparison_slots: u8,
     selected_branch: Option<SelectedHistoryBranch>,
     // Colour index of the lane the selection sits on; every other lane washes
     // out. A property of the lane, not of this row.
@@ -3212,6 +3295,7 @@ fn history_table_row(
         graph_row_ix,
         tag_names,
         ref_items,
+        comparison_slots,
         selected_branch,
         selected_lane,
         lane_branch_name,
@@ -3270,6 +3354,15 @@ fn history_table_row(
                     clicked_index: Some(graph_row_ix),
                     visible_order,
                 });
+                if this.auto_open_diff_on_selection && mode == CommitSelectMode::Single {
+                    this.store.dispatch(Msg::SelectDiff {
+                        repo_id,
+                        target: gitcomet_core::domain::DiffTarget::Commit {
+                            commit_id: commit_id.clone(),
+                            path: None,
+                        },
+                    });
+                }
                 cx.notify();
             }),
         );
@@ -3329,6 +3422,7 @@ fn worktree_uncommitted_history_row(
     repo_id: RepoId,
     list_ix: usize,
     selected: bool,
+    comparison_slots: u8,
     counts: (usize, usize, usize),
     summary: &gitcomet_core::domain::WorktreeDirtySummary,
     cx: &mut gpui::Context<HistoryView>,
@@ -3452,7 +3546,7 @@ fn worktree_uncommitted_history_row(
 
     let badge = super::sidebar::worktree_origin_chip(
         theme,
-        badge_label,
+        badge_label.clone(),
         scaled_px(9.0),
         scaled_px(HISTORY_WORKTREE_BADGE_HEIGHT_PX),
         scaled_px(HISTORY_WORKTREE_BADGE_MAX_W_PX),
@@ -3478,6 +3572,13 @@ fn worktree_uncommitted_history_row(
     }));
 
     let select_path = summary.path.clone();
+    let comparison_path = summary.path.clone();
+    let comparison_head = summary.head.clone();
+    let comparison_head_label = summary.branch.as_deref().map_or_else(
+        || "Worktree HEAD".to_string(),
+        |branch| format!("{branch} HEAD"),
+    );
+    let comparison_worktree_label = format!("Worktree: {badge_label}");
     let mut row = div()
         .id(("history_worktree_uncommitted", list_ix))
         .h(history_row_height(ui_scale, graph_metrics))
@@ -3496,6 +3597,25 @@ fn worktree_uncommitted_history_row(
                 repo_id,
                 path: select_path.clone(),
             });
+            if this.auto_open_diff_on_selection
+                && let Some(head) = comparison_head.clone()
+            {
+                this.store.dispatch(Msg::SetComparisonSlot {
+                    repo_id,
+                    slot: ComparisonSlot::A,
+                    endpoint: ComparisonMark::commit(head, comparison_head_label.clone()),
+                    auto_open: false,
+                });
+                this.store.dispatch(Msg::SetComparisonSlot {
+                    repo_id,
+                    slot: ComparisonSlot::B,
+                    endpoint: ComparisonMark::worktree_dirty(
+                        comparison_path.clone(),
+                        comparison_worktree_label.clone(),
+                    ),
+                    auto_open: true,
+                });
+            }
             cx.notify();
         }))
         .child(
@@ -3524,6 +3644,7 @@ fn worktree_uncommitted_history_row(
                 .when(show_graph_color_marker, |cell| {
                     cell.child(history_message_border(ui_scale, node_color))
                 });
+            summary = summary.children(comparison_slot_badges(theme, ui_scale, comparison_slots));
             summary = summary.child(
                 div()
                     .flex_shrink_0()
@@ -3572,6 +3693,9 @@ fn working_tree_summary_history_row(
     show_graph_color_marker: bool,
     repo_id: RepoId,
     selected: bool,
+    workdir: std::path::PathBuf,
+    head: Option<CommitId>,
+    comparison_slots: u8,
     counts: (usize, usize, usize),
     cx: &mut gpui::Context<HistoryView>,
 ) -> AnyElement {
@@ -3732,6 +3856,7 @@ fn working_tree_summary_history_row(
                 .when(show_graph_color_marker, |cell| {
                     cell.child(history_message_border(ui_scale, node_color))
                 });
+            summary = summary.children(comparison_slot_badges(theme, ui_scale, comparison_slots));
             summary = summary.child(
                 div()
                     .flex_1()
@@ -3765,7 +3890,24 @@ fn working_tree_summary_history_row(
         .when(show_sha, |row| row.child(div().w(col_sha)))
         .on_click(cx.listener(move |this, _e: &ClickEvent, _w, cx| {
             this.store.dispatch(Msg::ClearCommitSelection { repo_id });
-            this.store.dispatch(Msg::ClearDiffSelection { repo_id });
+            if this.auto_open_diff_on_selection
+                && let Some(head) = head.clone()
+            {
+                this.store.dispatch(Msg::SetComparisonSlot {
+                    repo_id,
+                    slot: ComparisonSlot::A,
+                    endpoint: ComparisonMark::commit(head, "HEAD"),
+                    auto_open: false,
+                });
+                this.store.dispatch(Msg::SetComparisonSlot {
+                    repo_id,
+                    slot: ComparisonSlot::B,
+                    endpoint: ComparisonMark::worktree_dirty(workdir.clone(), "Working tree"),
+                    auto_open: true,
+                });
+            } else {
+                this.store.dispatch(Msg::ClearDiffSelection { repo_id });
+            }
             cx.notify();
         }));
 

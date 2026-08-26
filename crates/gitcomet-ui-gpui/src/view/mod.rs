@@ -1432,6 +1432,7 @@ impl GitCometView {
         let diff_reveal_whitespace_chars = ui_session.diff_reveal_whitespace_chars.unwrap_or(false);
         let diff_word_wrap = ui_session.diff_word_wrap.unwrap_or(false);
         let diff_show_line_numbers = ui_session.diff_show_line_numbers.unwrap_or(true);
+        let auto_open_diff_on_selection = ui_session.auto_open_diff_on_selection.unwrap_or(true);
         let auto_save_file_edits = ui_session.auto_save_file_edits.unwrap_or(false);
         let commit_push_after_enabled = ui_session.commit_push_after_enabled.unwrap_or(false);
         let restored_change_tracking_height = ui_session.change_tracking_height;
@@ -1605,6 +1606,7 @@ impl GitCometView {
                 diff_reveal_whitespace_chars,
                 diff_word_wrap,
                 diff_show_line_numbers,
+                auto_open_diff_on_selection,
                 auto_save_file_edits,
                 history_show_graph,
                 history_show_author,
@@ -1694,6 +1696,7 @@ impl GitCometView {
                 diff_reveal_whitespace_chars,
                 diff_word_wrap,
                 diff_show_line_numbers,
+                auto_open_diff_on_selection,
                 weak_view.clone(),
                 view_mode,
                 tooltip_host.downgrade(),
@@ -1980,6 +1983,7 @@ impl GitCometView {
             diff_reveal_whitespace_chars,
             diff_word_wrap,
             diff_show_line_numbers,
+            auto_open_diff_on_selection,
             auto_save_file_edits,
             ui_scale_percent: ui_scale.percent,
             open_repo_panel: false,
@@ -2564,6 +2568,25 @@ impl GitCometView {
         self.auto_save_file_edits = next;
         self.main_pane
             .update(cx, |pane, cx| pane.set_auto_save_file_edits(next, cx));
+    }
+
+    pub(in crate::view) fn set_auto_open_diff_on_selection(
+        &mut self,
+        next: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.auto_open_diff_on_selection == next {
+            return;
+        }
+        self.auto_open_diff_on_selection = next;
+        self.main_pane.update(cx, |pane, cx| {
+            pane.set_auto_open_diff_on_selection(next, cx)
+        });
+        self.popover_host.update(cx, |host, cx| {
+            host.set_auto_open_diff_on_selection(next, cx)
+        });
+        self.schedule_ui_settings_persist(cx);
+        cx.notify();
     }
 
     pub(in crate::view) fn set_history_column_preferences(

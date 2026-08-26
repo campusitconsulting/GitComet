@@ -1128,21 +1128,38 @@ pub(super) fn set_comparison_slot(
     repo_id: RepoId,
     slot: ComparisonSlot,
     endpoint: ComparisonMark,
+    auto_open: bool,
 ) -> Vec<Effect> {
-    let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
-        return Vec::new();
-    };
-    match slot {
-        ComparisonSlot::A => {
-            repo_state.comparison_mark = Some(endpoint.clone());
-            repo_state.comparison_shelf.a = Some(endpoint);
+    let pair = {
+        let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) else {
+            return Vec::new();
+        };
+        match slot {
+            ComparisonSlot::A => {
+                repo_state.comparison_mark = Some(endpoint.clone());
+                repo_state.comparison_shelf.a = Some(endpoint);
+            }
+            ComparisonSlot::B => repo_state.comparison_shelf.b = Some(endpoint),
         }
-        ComparisonSlot::B => repo_state.comparison_shelf.b = Some(endpoint),
+        repo_state.comparison_shelf.selected_name = None;
+        repo_state.comparison_shelf.snapshot_request =
+            repo_state.comparison_shelf.snapshot_request.wrapping_add(1);
+        auto_open
+            .then(|| {
+                Some((
+                    repo_state.comparison_shelf.a.clone()?,
+                    repo_state.comparison_shelf.b.clone()?,
+                ))
+            })
+            .flatten()
+            .filter(|(a, b)| a.endpoint != b.endpoint)
+    };
+
+    let mut effects = vec![persist_comparison_shelf_effect(repo_id)];
+    if let Some((a, b)) = pair {
+        effects.extend(compare_comparison_endpoints(state, repo_id, a, b));
     }
-    repo_state.comparison_shelf.selected_name = None;
-    repo_state.comparison_shelf.snapshot_request =
-        repo_state.comparison_shelf.snapshot_request.wrapping_add(1);
-    vec![persist_comparison_shelf_effect(repo_id)]
+    effects
 }
 
 pub(super) fn clear_comparison_slot(

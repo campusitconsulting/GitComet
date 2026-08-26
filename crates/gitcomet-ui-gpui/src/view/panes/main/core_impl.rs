@@ -1348,6 +1348,7 @@ impl MainPaneView {
         diff_reveal_whitespace_chars: bool,
         diff_word_wrap: bool,
         diff_show_line_numbers: bool,
+        auto_open_diff_on_selection: bool,
         auto_save_file_edits: bool,
         history_show_graph: bool,
         history_show_author: bool,
@@ -1586,6 +1587,7 @@ impl MainPaneView {
                 history_relative_dates,
                 history_highlight_commit_chain,
                 history_highlight_strength_percent,
+                auto_open_diff_on_selection,
                 history_graph_node_style,
                 history_graph_style,
                 history_show_graph,
@@ -4244,6 +4246,16 @@ impl MainPaneView {
         self.diff_wrap_visible_cache_key = None;
         self.reset_diff_horizontal_scroll_state();
         cx.notify();
+    }
+
+    pub(in crate::view) fn set_auto_open_diff_on_selection(
+        &mut self,
+        next: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.history_view.update(cx, |view, cx| {
+            view.set_auto_open_diff_on_selection(next, cx)
+        });
     }
 
     pub(in crate::view) fn active_repo_id(&self) -> Option<RepoId> {

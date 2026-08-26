@@ -1003,6 +1003,7 @@ impl PopoverHost {
                     repo_id,
                     slot,
                     endpoint,
+                    auto_open: self.auto_open_diff_on_selection,
                 });
             }
             ContextMenuAction::CherryPickCommit { repo_id, commit_id } => {

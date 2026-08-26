@@ -333,6 +333,7 @@ pub(super) fn activate(
         repo_id: endpoint.repo_id,
         slot: endpoint.slot,
         endpoint: endpoint.mark,
+        auto_open: this.auto_open_diff_on_selection,
     });
     this.close_popover(cx);
 }

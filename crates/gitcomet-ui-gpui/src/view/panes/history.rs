@@ -1106,6 +1106,7 @@ pub(in super::super) struct HistoryView {
     pub(in super::super) history_relative_dates: bool,
     pub(in super::super) history_highlight_commit_chain: bool,
     pub(in super::super) history_highlight_strength_percent: u8,
+    pub(in super::super) auto_open_diff_on_selection: bool,
     pub(in super::super) history_graph_node_style: gitcomet_state::session::HistoryGraphNodeStyle,
     pub(in super::super) history_graph_style: gitcomet_state::session::HistoryGraphStylePreset,
     _ui_model_subscription: gpui::Subscription,
@@ -1190,6 +1191,16 @@ impl HistoryView {
             // so both revs have to move the fingerprint or the rows never repaint.
             repo.worktree_dirty_rev.hash(&mut hasher);
             repo.history_state.worktree_selection_rev.hash(&mut hasher);
+            repo.comparison_shelf
+                .a
+                .as_ref()
+                .map(|mark| &mark.endpoint)
+                .hash(&mut hasher);
+            repo.comparison_shelf
+                .b
+                .as_ref()
+                .map(|mark| &mark.endpoint)
+                .hash(&mut hasher);
             repo.worktree_status_cache_rev().hash(&mut hasher);
             repo.staged_status_cache_rev().hash(&mut hasher);
         }
@@ -1209,6 +1220,7 @@ impl HistoryView {
         history_relative_dates: bool,
         history_highlight_commit_chain: bool,
         history_highlight_strength_percent: u8,
+        auto_open_diff_on_selection: bool,
         history_graph_node_style: gitcomet_state::session::HistoryGraphNodeStyle,
         history_graph_style: gitcomet_state::session::HistoryGraphStylePreset,
         history_show_graph: bool,
@@ -1342,6 +1354,7 @@ impl HistoryView {
             history_relative_dates,
             history_highlight_commit_chain,
             history_highlight_strength_percent,
+            auto_open_diff_on_selection,
             history_graph_node_style,
             history_graph_style,
             _ui_model_subscription: subscription,
@@ -1902,6 +1915,18 @@ impl HistoryView {
         }
         self.history_highlight_strength_percent = percent;
         self.history_selected_lane_color_cache = None;
+        cx.notify();
+    }
+
+    pub(in super::super) fn set_auto_open_diff_on_selection(
+        &mut self,
+        next: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.auto_open_diff_on_selection == next {
+            return;
+        }
+        self.auto_open_diff_on_selection = next;
         cx.notify();
     }
 

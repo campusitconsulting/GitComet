@@ -499,6 +499,7 @@ pub(crate) struct SettingsWindowView {
     diff_reveal_whitespace_chars: bool,
     diff_word_wrap: bool,
     diff_show_line_numbers: bool,
+    auto_open_diff_on_selection: bool,
     auto_save_file_edits: bool,
     diff_scroll_sync: DiffScrollSync,
     history_show_graph: bool,
@@ -926,6 +927,7 @@ impl SettingsWindowView {
         let diff_reveal_whitespace_chars = ui_session.diff_reveal_whitespace_chars.unwrap_or(false);
         let diff_word_wrap = ui_session.diff_word_wrap.unwrap_or(false);
         let diff_show_line_numbers = ui_session.diff_show_line_numbers.unwrap_or(true);
+        let auto_open_diff_on_selection = ui_session.auto_open_diff_on_selection.unwrap_or(true);
         let auto_save_file_edits = ui_session.auto_save_file_edits.unwrap_or(false);
         let history_show_graph = ui_session.history_show_graph.unwrap_or(true);
         let history_show_author = ui_session.history_show_author.unwrap_or(true);
@@ -1174,6 +1176,7 @@ impl SettingsWindowView {
             diff_reveal_whitespace_chars,
             diff_word_wrap,
             diff_show_line_numbers,
+            auto_open_diff_on_selection,
             auto_save_file_edits,
             diff_scroll_sync,
             history_show_graph,
@@ -1286,6 +1289,7 @@ impl SettingsWindowView {
             diff_reveal_whitespace_chars: Some(self.diff_reveal_whitespace_chars),
             diff_word_wrap: Some(self.diff_word_wrap),
             diff_show_line_numbers: Some(self.diff_show_line_numbers),
+            auto_open_diff_on_selection: Some(self.auto_open_diff_on_selection),
             auto_save_file_edits: Some(self.auto_save_file_edits),
             // Merge tool settings are managed from the resolver's cog menu;
             // None never overwrites the stored values.
@@ -2060,6 +2064,19 @@ impl SettingsWindowView {
         self.persist_preferences(cx);
         self.update_main_windows(cx, move |view, _window, cx| {
             view.set_diff_show_line_numbers(next, cx);
+        });
+        cx.notify();
+    }
+
+    fn set_auto_open_diff_on_selection(&mut self, next: bool, cx: &mut gpui::Context<Self>) {
+        if self.auto_open_diff_on_selection == next {
+            return;
+        }
+
+        self.auto_open_diff_on_selection = next;
+        self.persist_preferences(cx);
+        self.update_main_windows(cx, move |view, _window, cx| {
+            view.set_auto_open_diff_on_selection(next, cx);
         });
         cx.notify();
     }
@@ -4015,6 +4032,20 @@ impl Render for SettingsWindowView {
                             this.set_diff_show_line_numbers(!this.diff_show_line_numbers, cx);
                         }));
 
+                    let auto_open_diff_on_selection_row = self
+                        .toggle_row(
+                            "settings_window_auto_open_diff_on_selection",
+                            "Open diff when selection changes",
+                            self.auto_open_diff_on_selection,
+                            theme,
+                        )
+                        .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
+                            this.set_auto_open_diff_on_selection(
+                                !this.auto_open_diff_on_selection,
+                                cx,
+                            );
+                        }));
+
                     let history_default_mode_row = self
                         .summary_row(
                             "settings_window_git_log_default_mode",
@@ -5048,7 +5079,8 @@ impl Render for SettingsWindowView {
                         .child(diff_whitespace_mode_row)
                         .child(diff_reveal_whitespace_chars_row)
                         .child(diff_word_wrap_row)
-                        .child(diff_show_line_numbers_row);
+                        .child(diff_show_line_numbers_row)
+                        .child(auto_open_diff_on_selection_row);
 
                     diff_card = diff_card.child(diff_scroll_sync_row);
 
