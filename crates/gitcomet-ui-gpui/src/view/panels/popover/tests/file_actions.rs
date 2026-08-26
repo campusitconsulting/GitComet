@@ -113,7 +113,9 @@ fn commit_menu_has_add_tag_entry(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn commit_menu_exposes_explicit_a_and_b_comparison_actions(cx: &mut gpui::TestAppContext) {
+fn commit_menu_keeps_upstream_comparison_actions_without_duplicate_ab_entries(
+    cx: &mut gpui::TestAppContext,
+) {
     let (store, events) = AppStore::new(Arc::new(TestBackend));
     let (view, cx) =
         cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
@@ -143,37 +145,22 @@ fn commit_menu_exposes_explicit_a_and_b_comparison_actions(cx: &mut gpui::TestAp
         })
         .expect("expected commit context menu model");
 
-    for (label, expected_slot) in [
-        (
-            "Set 12345678 as comparison A",
-            gitcomet_state::model::ComparisonSlot::A,
-        ),
-        (
-            "Set 12345678 as comparison B",
-            gitcomet_state::model::ComparisonSlot::B,
-        ),
-    ] {
-        let action = model.items.iter().find_map(|item| match item {
-            ContextMenuItem::Entry {
-                label: entry_label,
-                action,
-                ..
-            } if entry_label.as_ref() == label => Some((**action).clone()),
+    let labels = model
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ContextMenuItem::Entry { label, .. } => Some(label.as_ref()),
             _ => None,
-        });
-        let Some(ContextMenuAction::SetComparisonSlot {
-            repo_id: action_repo,
-            slot,
-            endpoint,
-        }) = action
-        else {
-            panic!("expected `{label}` action");
-        };
-        assert_eq!(action_repo, repo_id);
-        assert_eq!(slot, expected_slot);
-        assert_eq!(endpoint.commit_id(), Some(&commit_id));
-        assert_eq!(endpoint.label, "12345678");
-    }
+        })
+        .collect::<Vec<_>>();
+
+    assert!(labels.contains(&"Mark 12345678 for comparison"));
+    assert!(labels.contains(&"Compare with working tree"));
+    assert!(
+        !labels
+            .iter()
+            .any(|label| label.starts_with("Set 12345678 as comparison"))
+    );
 }
 
 #[gpui::test]

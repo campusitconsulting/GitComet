@@ -123,24 +123,6 @@ pub(super) fn model(
     };
     if let Some(commit_id) = branch_commit_id {
         let comparison_mark = repo.and_then(|r| r.comparison_mark.clone());
-        let endpoint =
-            gitcomet_state::model::ComparisonMark::commit(commit_id.clone(), name.clone());
-        for (slot, slot_label) in [
-            (gitcomet_state::model::ComparisonSlot::A, "A"),
-            (gitcomet_state::model::ComparisonSlot::B, "B"),
-        ] {
-            items.push(ContextMenuItem::Entry {
-                label: format!("Set {name} as comparison {slot_label}").into(),
-                icon: Some("icons/git_branch.svg".into()),
-                shortcut: None,
-                disabled: false,
-                action: Box::new(ContextMenuAction::SetComparisonSlot {
-                    repo_id,
-                    slot,
-                    endpoint: endpoint.clone(),
-                }),
-            });
-        }
         items.push(ContextMenuItem::Entry {
             label: format!("Mark {name} for comparison").into(),
             icon: Some("icons/git_branch.svg".into()),

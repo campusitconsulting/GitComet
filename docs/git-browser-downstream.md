@@ -184,23 +184,24 @@ when selection changes` enabled (the default), choosing the second distinct A/B
 endpoint performs the same action immediately. Selecting a file then narrows
 the patch to that path.
 
-Worktree row menus expose both `Set worktree HEAD as comparison A/B` and
-`Set worktree working state as comparison A/B` directly.
-The saved label contains both the branch and worktree directory name so two
-linked checkouts remain distinguishable. An unborn worktree has no commit
-endpoint and therefore does not offer the HEAD action. A working-state endpoint
-captures staged, unstaged and non-ignored untracked files through a private
-temporary index and immutable Git tree; it does not checkout, stash, or mutate
-either worktree's real index. Consequently commit↔worktree and two different
-dirty worktree↔worktree comparisons are internally stable even while agents
-continue editing after the diff opens.
+The A/B endpoint picker exposes both a worktree's immutable HEAD and its live
+working state. The saved label contains both the branch and worktree directory
+name so two linked checkouts remain distinguishable. An unborn worktree has no
+commit endpoint and therefore does not appear under Worktree HEADs. A
+working-state endpoint captures staged, unstaged and non-ignored untracked files
+through a private temporary index and immutable Git tree; it does not checkout,
+stash, or mutate either worktree's real index. Consequently commit↔worktree and
+two different dirty worktree↔worktree comparisons are internally stable even
+while agents continue editing after the diff opens.
 
 Both A/B chips are direct, searchable endpoint pickers. They combine loaded
 local and remote branches, local and remote tags, worktree HEADs, dirty
 worktree states and history commits in one sectioned list; full OIDs and commit
-summaries are searchable.
-Context-menu actions remain as a faster route when the desired object is
-already under the pointer.
+summaries are searchable. Commit, branch and tag context menus retain
+GitComet's upstream `Mark for comparison`, `Compare with ...`, `Clear
+comparison mark`, and `Compare with working tree` flow. The mark mirrors A and
+`Compare with ...` fills B, so the upstream flow and the shelf share state
+without duplicate `Set as comparison A/B` menu entries.
 
 The same global auto-open option opens a commit's complete parent diff on a
 plain history-row click. Clicking `Uncommitted changes` or a linked worktree's

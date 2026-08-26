@@ -7,10 +7,10 @@ checking out either branch and without changing either worktree's real index.
 
 Choose either endpoint in the A/B comparison shelf. Dirty linked worktrees are
 listed under **Live worktree states**, separately from their immutable entries
-under **Worktree HEADs**. The worktree context menu also provides **Set
-worktree working state as comparison A/B**. Choose two states and press **Open
-diff**. Commit ↔ worktree and worktree ↔ worktree combinations use the same
-flow.
+under **Worktree HEADs**. Choose two states and press **Open diff**. Commit ↔
+worktree and worktree ↔ worktree combinations use the same flow. Endpoint
+selection stays in the searchable shelf so worktree context menus remain
+aligned with upstream GitComet.
 
 The picker wording is intentional:
 
@@ -45,4 +45,3 @@ Git garbage collection; silently restoring such a pair after restart would
 therefore be unreliable. A future durable-snapshot feature can opt into hidden
 refs explicitly, rather than changing repository refs as a side effect of a
 local review.
-

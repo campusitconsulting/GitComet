@@ -441,26 +441,7 @@ impl PopoverHost {
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Worktree(WorktreePopoverKind::Menu { path, branch }),
-            } => {
-                let head = self
-                    .state
-                    .repos
-                    .iter()
-                    .find(|repo| repo.id == *repo_id)
-                    .and_then(|repo| match &repo.worktrees {
-                        Loadable::Ready(worktrees) => worktrees
-                            .iter()
-                            .find(|worktree| worktree.path == *path)
-                            .and_then(|worktree| worktree.head.clone()),
-                        _ => None,
-                    });
-                Some(worktree::model(
-                    *repo_id,
-                    path,
-                    branch.as_deref(),
-                    head.as_ref(),
-                ))
-            }
+            } => Some(worktree::model(*repo_id, path, branch.as_deref())),
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Submodule(SubmodulePopoverKind::SectionMenu),
@@ -993,18 +974,6 @@ impl PopoverHost {
             }
             ContextMenuAction::ClearComparisonMark { repo_id } => {
                 self.store.dispatch(Msg::ClearComparisonMark { repo_id });
-            }
-            ContextMenuAction::SetComparisonSlot {
-                repo_id,
-                slot,
-                endpoint,
-            } => {
-                self.store.dispatch(Msg::SetComparisonSlot {
-                    repo_id,
-                    slot,
-                    endpoint,
-                    auto_open: self.auto_open_diff_on_selection,
-                });
             }
             ContextMenuAction::CherryPickCommit { repo_id, commit_id } => {
                 let anchor = self.popover_anchor_point();
