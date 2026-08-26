@@ -133,12 +133,12 @@ fn history_chip_visual(theme: AppTheme, kind: HistoryChipStyleKind) -> HistoryCh
         },
         HistoryChipStyleKind::ComparisonA => HistoryChipVisual {
             border: with_alpha(theme.colors.accent.foreground, 0.90),
-            bg: with_alpha(theme.colors.accent.foreground, 0.22),
+            bg: with_alpha(theme.colors.accent.foreground, 0.08),
             text: theme.colors.accent.foreground,
         },
         HistoryChipStyleKind::ComparisonB => HistoryChipVisual {
             border: with_alpha(theme.colors.status.warning.foreground, 0.90),
-            bg: with_alpha(theme.colors.status.warning.foreground, 0.20),
+            bg: with_alpha(theme.colors.status.warning.foreground, 0.08),
             text: theme.colors.status.warning.foreground,
         },
         // The HEAD chip carries no selection state: a ring around a pill that is

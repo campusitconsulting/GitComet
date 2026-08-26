@@ -209,6 +209,9 @@ GitComet's upstream `Mark for comparison`, `Compare with ...`, `Clear
 comparison mark`, and `Compare with working tree` flow. The mark mirrors A and
 `Compare with ...` fills B, so the upstream flow and the shelf share state
 without duplicate `Set as comparison A/B` menu entries.
+The corresponding context-menu actions and history rows use the same compact
+blue `A` and orange `B` badges. Their fill is deliberately light so endpoint
+state does not compete with row selection or graph-lane highlighting.
 
 The same global auto-open option opens a commit's complete parent diff on a
 plain history-row click. Clicking `Uncommitted changes` or a linked worktree's

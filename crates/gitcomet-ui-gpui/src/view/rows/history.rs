@@ -3158,7 +3158,7 @@ fn comparison_slot_badges(
             .rounded(ui_scale.px(5.0))
             .border_1()
             .border_color(with_alpha(color, 0.90))
-            .bg(with_alpha(color, 0.20))
+            .bg(with_alpha(color, 0.08))
             .text_xs()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(color)

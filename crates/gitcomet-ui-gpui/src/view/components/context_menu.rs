@@ -89,6 +89,16 @@ pub enum ContextMenuIconSlot {
     Icon(SharedString),
 }
 
+/// A compact semantic marker shown at the trailing edge of a menu entry.
+///
+/// Comparison actions use the same A/B vocabulary and colors as the history
+/// graph, without baking the marker into the searchable action label.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContextMenuComparisonBadge {
+    A,
+    B,
+}
+
 pub fn context_menu(theme: AppTheme, content: impl IntoElement) -> Div {
     div()
         .w_full()
@@ -226,6 +236,7 @@ pub struct ContextMenuEntry {
     icon: ContextMenuIconSlot,
     shortcut: Option<SharedString>,
     shortcut_keycaps: bool,
+    comparison_badge: Option<ContextMenuComparisonBadge>,
     selected: bool,
     disabled: bool,
     tooltip_host: Option<WeakEntity<TooltipHost>>,
@@ -239,6 +250,7 @@ impl ContextMenuEntry {
             icon: ContextMenuIconSlot::None,
             shortcut: None,
             shortcut_keycaps: false,
+            comparison_badge: None,
             selected: false,
             disabled: false,
             tooltip_host: None,
@@ -257,6 +269,11 @@ impl ContextMenuEntry {
 
     pub fn shortcut_keycaps(mut self, shortcut_keycaps: bool) -> Self {
         self.shortcut_keycaps = shortcut_keycaps;
+        self
+    }
+
+    pub fn comparison_badge(mut self, badge: Option<ContextMenuComparisonBadge>) -> Self {
+        self.comparison_badge = badge;
         self
     }
 
@@ -297,6 +314,7 @@ fn context_menu_entry<V: 'static>(
         icon,
         shortcut,
         shortcut_keycaps,
+        comparison_badge,
         selected,
         disabled,
         tooltip_host,
@@ -385,6 +403,29 @@ fn context_menu_entry<V: 'static>(
         .text_xs()
         .line_height(scaled_px(14.0))
         .text_color(theme.colors.foreground.secondary);
+
+    if let Some(badge) = comparison_badge {
+        let (label, color) = match badge {
+            ContextMenuComparisonBadge::A => ("A", theme.colors.accent.foreground),
+            ContextMenuComparisonBadge::B => ("B", theme.colors.status.warning.foreground),
+        };
+        end = end.child(
+            div()
+                .h(scaled_px(18.0))
+                .min_w(scaled_px(18.0))
+                .px(scaled_px(5.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(scaled_px(5.0))
+                .border_1()
+                .border_color(crate::theme::with_alpha(color, 0.90))
+                .bg(crate::theme::with_alpha(color, 0.08))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(color)
+                .child(label),
+        );
+    }
 
     if let Some(shortcut) = shortcut {
         end = if shortcut_keycaps {

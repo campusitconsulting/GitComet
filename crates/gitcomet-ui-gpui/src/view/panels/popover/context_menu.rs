@@ -2179,11 +2179,21 @@ impl PopoverHost {
                             }
                             None => components::ContextMenuIconSlot::None,
                         };
+                        let comparison_badge = match action.as_ref() {
+                            ContextMenuAction::MarkForComparison { .. } => {
+                                Some(components::ContextMenuComparisonBadge::A)
+                            }
+                            ContextMenuAction::CompareWithMarked { .. } => {
+                                Some(components::ContextMenuComparisonBadge::B)
+                            }
+                            _ => None,
+                        };
                         let row =
                             components::ContextMenuEntry::new(("context_menu_entry", ix), label)
                                 .icon(icon_slot)
                                 .shortcut(shortcut)
                                 .shortcut_keycaps(shortcut_keycaps)
+                                .comparison_badge(comparison_badge)
                                 .selected(selected)
                                 .disabled(disabled)
                                 .tooltip_host(tooltip_host.clone())
