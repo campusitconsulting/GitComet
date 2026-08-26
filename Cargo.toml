@@ -153,6 +153,16 @@ lto = "fat"
 codegen-units = 1
 strip = "symbols"
 
+# Fast enough for representative UI/performance checks without making every
+# local preview pay the full fat-LTO release build cost.
+[profile.preview]
+inherits = "release"
+debug = 1
+incremental = true
+lto = "thin"
+codegen-units = 4
+strip = "none"
+
 [profile.release-with-debug]
 inherits = "release"
 debug = 2

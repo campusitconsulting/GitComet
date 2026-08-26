@@ -119,6 +119,13 @@ cargo test -p gitcomet-state
 On macOS the runtime-shaders feature avoids requiring a separately downloaded
 Xcode Metal Toolchain for development and CI checks.
 
+Interactive performance comparisons must not use the unoptimized dev binary.
+`cargo build -p gitcomet --profile preview --features runtime-shaders` uses
+release optimization with thin LTO, incremental output and four codegen units.
+It is intended for local UI previews: substantially closer to release runtime
+behaviour without the build-time and memory cost of the shipping fat-LTO
+profile.
+
 ### Reported `8c2c21cc` topology
 
 The commit was located in `/Users/aatamano/Development/ERP`. It is the second
