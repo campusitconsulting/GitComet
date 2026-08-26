@@ -11,6 +11,7 @@ pub(super) fn paint_history_graph(
     row_ix: usize,
     connect_from_top_col: Option<usize>,
     is_stash_node: bool,
+    is_branch_tip: bool,
     node_style: gitcomet_state::session::HistoryGraphNodeStyle,
     metrics: crate::view::history_graph_style::HistoryGraphMetrics,
     // The lane the selected commit sits on. Every colour the graph draws goes
@@ -40,6 +41,14 @@ pub(super) fn paint_history_graph(
     let col_gap = scaled_px(metrics.lane_pitch);
     let margin_x = scaled_px(metrics.margin_x);
     let node_radius = scaled_px(metrics.node_radius);
+    // A branch endpoint must read as a node rather than as a rounded line cap.
+    // Keep ordinary commits at the measured SourceTree diameter and lift only
+    // ref tips; 1.25pt still fits comfortably inside the 11pt lane pitch.
+    let terminal_node_radius = if is_branch_tip {
+        node_radius + scaled_px(1.25)
+    } else {
+        node_radius
+    };
     let node_corner_radius = scaled_px(metrics.node_corner_radius);
     let elbow_radius = scaled_px(metrics.elbow_radius);
 
@@ -179,18 +188,44 @@ pub(super) fn paint_history_graph(
         size(node_layer_half * 2.0, node_layer_half * 2.0),
     );
     window.paint_layer(node_layer_bounds, |window| {
+        // A terminal commit needs negative space around it: merely increasing
+        // a same-colour dot still reads as a rounded cap on the vertical lane.
+        // The background halo interrupts that lane and makes the endpoint
+        // unmistakable at normal zoom.
+        if is_branch_tip {
+            paint_commit_node(
+                bounds.left() + node_x,
+                y_center,
+                terminal_node_radius + scaled_px(1.5),
+                terminal_node_radius + scaled_px(1.5),
+                row_background,
+                window,
+            );
+        }
         if matches!(
             node_style,
             gitcomet_state::session::HistoryGraphNodeStyle::Dots
         ) {
-            paint_commit_node(
-                bounds.left() + node_x,
-                y_center,
-                node_radius,
-                node_corner_radius,
-                node_color,
-                window,
-            );
+            if is_branch_tip {
+                paint_terminal_node(
+                    bounds.left() + node_x,
+                    y_center,
+                    terminal_node_radius,
+                    node_color,
+                    row_background,
+                    scaled_px(1.5),
+                    window,
+                );
+            } else {
+                paint_commit_node(
+                    bounds.left() + node_x,
+                    y_center,
+                    node_radius,
+                    node_corner_radius,
+                    node_color,
+                    window,
+                );
+            }
         } else if is_stash_node {
             paint_icon_node(
                 bounds.left() + node_x,
@@ -217,7 +252,7 @@ pub(super) fn paint_history_graph(
             paint_commit_node(
                 bounds.left() + node_x,
                 y_center,
-                node_radius,
+                terminal_node_radius,
                 node_corner_radius,
                 node_color,
                 window,
@@ -460,31 +495,17 @@ pub(in crate::view) struct BandNode {
 
 /// Where a worktree's uncommitted node belongs on the row it sits above.
 ///
-/// A branch that has fallen behind does not own the lane its head commit is
-/// drawn on — the graph gives it a lane of its own, born at that commit and
-/// drawn as a whisker into the node (`history_graph.rs`, the `force_branch_head_lane`
-/// fork). A worktree checked out on such a branch belongs on *that* lane, in its
-/// colour; putting it on the commit's lane claims the work sits on the branch
-/// that happens to own the column, which is a different branch entirely.
-///
-/// A fork lane is recognised the same way the painter recognises it: a join edge
-/// whose source lane is born on this row rather than carried into it. There is
-/// at most one such lane per row. `on_branch` is false for a detached worktree,
-/// which has no branch to claim the fork.
+/// A branch that has fallen behind may not own the colour of the lane its head
+/// commit is drawn on. Ref metadata supplies the branch colour, while the graph
+/// keeps one commit node. A worktree on that branch gets its own band node when
+/// the commit lane passes through from above. `on_branch` is false for a
+/// detached worktree, which has no branch ref colour to claim.
 pub(in crate::view) fn band_node_for(row: &history_graph::GraphRow, on_branch: bool) -> BandNode {
-    let fork = on_branch.then(|| {
-        row.joins_in.iter().find(|edge| {
-            edge.from_col != edge.to_col
-                && row
-                    .lanes_now
-                    .get(usize::from(edge.from_col))
-                    .is_some_and(|lane| lane.is_active() && !lane.incoming())
-        })
-    });
-    let (natural_col, color_ix) = match fork.flatten() {
-        Some(edge) => (edge.from_col, edge.color_ix),
-        None => (row.node_col, row.node_color_ix),
-    };
+    let natural_col = row.node_col;
+    let color_ix = on_branch
+        .then_some(row.ref_tip_color_ix)
+        .flatten()
+        .unwrap_or(row.node_color_ix);
 
     // Uncommitted changes are not a commit: nothing descends from them, so the
     // node must never sit on a lane that runs *past* it. On a lane carried in
@@ -827,6 +848,37 @@ fn paint_commit_node(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
+fn paint_terminal_node(
+    x_center: Pixels,
+    y_center: Pixels,
+    node_radius: Pixels,
+    node_color: gpui::Rgba,
+    background: gpui::Rgba,
+    halo_width: Pixels,
+    window: &mut Window,
+) {
+    // Both quads are circles. The outer one uses the row's *actual* composite
+    // background, including selection/hover tint, so the halo never looks like
+    // a pasted white sticker.
+    paint_commit_node(
+        x_center,
+        y_center,
+        node_radius + halo_width,
+        node_radius + halo_width,
+        background,
+        window,
+    );
+    paint_commit_node(
+        x_center,
+        y_center,
+        node_radius,
+        node_radius,
+        node_color,
+        window,
+    );
+}
+
 fn icon_node_dimensions(style: gitcomet_state::session::HistoryGraphNodeStyle) -> (f32, f32) {
     match style {
         gitcomet_state::session::HistoryGraphNodeStyle::DetailedIcons => (16.0, 10.5),
@@ -932,6 +984,7 @@ mod band_tests {
             lanes_next: lanes.iter().copied().collect(),
             joins_in: Default::default(),
             edges_out: Default::default(),
+            ref_tip_color_ix: None,
             node_col,
             node_color_ix: 0,
             is_merge: false,
@@ -962,26 +1015,28 @@ mod band_tests {
         }
     }
 
-    /// A branch that has fallen behind is drawn as a lane born at its head
-    /// commit, whiskered into a node the *other* branch owns. The worktree sits
-    /// on the branch, so it belongs on that born lane, in its colour.
+    /// A worktree on a behind branch uses that branch's colour while remaining
+    /// connected to the single commit node.
     #[test]
-    fn a_behind_branchs_fork_lane_claims_the_node() {
-        let mut row = band(&[incoming(1), born(7)], 0);
-        row.joins_in = [edge(1, 0, 7)].into_iter().collect();
+    fn a_behind_branch_uses_ref_colour_on_the_single_node() {
+        let mut row = band(&[incoming(1)], 0);
+        row.node_color_ix = 1;
+        row.ref_tip_color_ix = Some(7);
 
         let node = band_node_for(&row, true);
-        assert_eq!(node.col, 1, "the node belongs on the branch's own lane");
-        assert_eq!(node.color_ix, 7, "and takes that lane's colour");
+        assert_eq!(node.col, 1, "uncommitted changes use a free column");
+        assert_eq!(node.exit_col, 0, "the connector lands on the commit");
+        assert_eq!(node.color_ix, 7, "the band takes the branch colour");
     }
 
     /// Selecting a worktree row highlights its *branch's* lane. For a branch
-    /// that has fallen behind, that is the fork lane beside the commit — not the
-    /// lane the commit itself is drawn on, which belongs to its descendant.
+    /// that has fallen behind, it uses ref metadata rather than the descendant
+    /// lane colour carried through the commit.
     #[test]
-    fn a_behind_branchs_highlight_follows_the_fork_lane_not_the_commit() {
-        let mut row = band(&[incoming(1), born(7)], 0);
-        row.joins_in = [edge(1, 0, 7)].into_iter().collect();
+    fn a_behind_branchs_highlight_uses_ref_colour_not_descendant_colour() {
+        let mut row = band(&[incoming(1)], 0);
+        row.node_color_ix = 1;
+        row.ref_tip_color_ix = Some(7);
 
         let highlighted = band_node_for(&row, true).color_ix;
         assert_eq!(highlighted, 7, "the branch's own lane is what lights up");
@@ -991,22 +1046,19 @@ mod band_tests {
         );
     }
 
-    /// The fork whisker beside a behind-branch's node carries the branch's colour
-    /// on that row alone, while the lane the colour really belongs to starts one
-    /// column over in `lanes_next`. Resolving the highlight to the whisker pinned
-    /// it to a single row, so `covers` said no for every row below and the whole
-    /// branch washed out -- the failure `SelectedLane` exists to prevent.
+    /// Ref colour metadata must not collapse branch highlighting to the head
+    /// row: the selected lane continues through the rows below.
     #[test]
-    fn a_fork_whisker_does_not_collapse_the_highlight_to_one_row() {
+    fn ref_colour_metadata_does_not_collapse_the_highlight_to_one_row() {
         let theme = AppTheme::gitcomet_dark();
-        // The head commit: its own lane (colour 1) runs on to its descendant,
-        // the branch's new lane (colour 7) is born at the node in that same
-        // column, and the whisker marking the head sits beside it.
+        // The head commit changes from the descendant colour to the branch
+        // colour below its single node.
         let anchor = GraphRow {
-            lanes_now: [incoming(1), born(7)].into_iter().collect(),
+            lanes_now: [incoming(1)].into_iter().collect(),
             lanes_next: [LanePaint::lane(7, false, true)].into_iter().collect(),
-            joins_in: [edge(1, 0, 7)].into_iter().collect(),
+            joins_in: Default::default(),
             edges_out: Default::default(),
+            ref_tip_color_ix: Some(7),
             node_col: 0,
             node_color_ix: 7,
             is_merge: false,
@@ -1016,6 +1068,7 @@ mod band_tests {
             lanes_next: [incoming(7)].into_iter().collect(),
             joins_in: Default::default(),
             edges_out: Default::default(),
+            ref_tip_color_ix: None,
             node_col: 0,
             node_color_ix: 7,
             is_merge: false,
@@ -1103,16 +1156,16 @@ mod band_tests {
         assert_ne!(node.col, node.exit_col, "so the band draws that elbow");
     }
 
-    /// A lane born at the commit below has nothing above it, so the node can sit
-    /// on it directly and simply run straight down.
+    /// Ref metadata does not create another graph column or another visible
+    /// node; the worktree band still elbows into the one commit node.
     #[test]
-    fn a_lane_born_below_needs_no_column_of_its_own() {
-        let mut row = band(&[incoming(1), born(7)], 0);
-        row.joins_in = [edge(1, 0, 7)].into_iter().collect();
+    fn ref_colour_metadata_needs_no_graph_column() {
+        let mut row = band(&[incoming(1)], 0);
+        row.ref_tip_color_ix = Some(7);
 
         let node = band_node_for(&row, true);
         assert_eq!(node.col, 1);
-        assert_eq!(node.exit_col, node.col, "a straight connector, no elbow");
+        assert_eq!(node.exit_col, 0, "the connector lands on the commit node");
     }
 
     fn worktree(branch: Option<&str>, detached: bool) -> WorktreeDirtySummary {
@@ -1130,25 +1183,21 @@ mod band_tests {
     }
 
     /// Two dirty worktrees on one commit stack into two bands above it. They
-    /// share the anchor row but not necessarily the column, so the lower band's
-    /// connector has to be read off the *upper* band's own worktree.
+    /// share the anchor row, so the lower band's connector has to be read off
+    /// the upper band's landing column.
     #[test]
     fn a_stacked_band_connects_from_the_band_above_not_from_itself() {
-        let mut row = band(&[incoming(1), born(7)], 0);
-        row.joins_in = [edge(1, 0, 7)].into_iter().collect();
+        let mut row = band(&[incoming(1)], 0);
+        row.ref_tip_color_ix = Some(7);
 
-        // Detached above, on a behind branch below: `band_node_for` puts them on
-        // different columns for the same row.
+        // Detached above and a behind branch below both land on the one commit.
         let dirty = [worktree(None, true), worktree(Some("behind"), false)];
         let plan = HistoryListPlan::new(false, vec![row_anchor(0, 0), row_anchor(0, 1)]);
         let rows = [row.clone()];
 
         let detached = band_node_for(&row, false);
         let on_branch = band_node_for(&row, true);
-        assert_ne!(
-            detached.exit_col, on_branch.exit_col,
-            "fixture must actually put the two worktrees on different columns"
-        );
+        assert_eq!(detached.exit_col, on_branch.exit_col);
         assert_ne!(
             detached.col, detached.exit_col,
             "and the detached node must be the pushed-out kind, so col != exit_col"

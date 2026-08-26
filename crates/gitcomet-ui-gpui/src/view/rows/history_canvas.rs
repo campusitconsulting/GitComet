@@ -198,6 +198,20 @@ fn history_row_is_selected_branch_tip(
         .any(|item| history_ref_is_selected_branch(&item.kind, selected_branch))
 }
 
+/// A branch ref makes this commit a terminal orientation point in the graph.
+/// Tags alone do not: they decorate history but do not own a branch lane.
+fn history_row_has_branch_tip(ref_items: &[HistoryRefListItem]) -> bool {
+    ref_items.iter().any(|item| {
+        matches!(
+            item.kind,
+            HistoryRefListItemKind::AttachedHead { .. }
+                | HistoryRefListItemKind::DetachedHead
+                | HistoryRefListItemKind::LocalBranch { .. }
+                | HistoryRefListItemKind::RemoteBranch { .. }
+        )
+    })
+}
+
 /// The commit summary carries the history's own selection.
 ///
 /// `related_to_selection` is `None` when no single commit is selected, and only
@@ -371,6 +385,7 @@ pub(super) fn history_commit_row_canvas(
     summary: HistoryTextVm,
     when: HistoryTextVm,
     short_sha: HistoryTextVm,
+    is_head: bool,
     // The background the row's own `div` carries (selection, HEAD, open context
     // menu), and the one it swaps in while hovered. Mirrored rather than painted
     // again: the graph's icon nodes knock their glyphs out in the row background,
@@ -424,10 +439,21 @@ pub(super) fn history_commit_row_canvas(
 
             let is_selected_branch_tip =
                 history_row_is_selected_branch_tip(&ref_items, selected_branch.as_ref());
+            let has_branch_tip = history_row_has_branch_tip(&ref_items);
 
             let design_scale_factor = ui_scale::design_scale_factor_from_window(window);
             let scaled_px = |value| px(value * design_scale_factor);
             let base_style = window.text_style();
+            // HEAD is the primary orientation point in a busy all-branches log.
+            // Its quiet row tint and ref chip are easy to lose among many
+            // coloured lanes, so keep the commit summary semibold as well.
+            let summary_style = if is_head {
+                let mut style = base_style.clone();
+                style.font_weight = gpui::FontWeight::SEMIBOLD;
+                style
+            } else {
+                base_style.clone()
+            };
             // Avatar initials are semibold, matching `components::author_avatar`.
             let initials_style = {
                 let mut style = base_style.clone();
@@ -559,6 +585,7 @@ pub(super) fn history_commit_row_canvas(
                                 graph_row_ix,
                                 connect_from_top_col,
                                 is_stash_node,
+                                has_branch_tip,
                                 node_style,
                                 graph_metrics,
                                 selected_lane,
@@ -855,7 +882,7 @@ pub(super) fn history_commit_row_canvas(
             if !summary.is_empty() {
                 let shaped = shape_truncated_line_cached(
                     window,
-                    &base_style,
+                    &summary_style,
                     sm_font,
                     summary.shared(),
                     summary.text_hash(),
@@ -1281,6 +1308,23 @@ mod tests {
             text: HistoryTextVm::new(SharedString::from("chip")),
             kind,
         }
+    }
+
+    #[test]
+    fn branch_refs_but_not_tags_mark_terminal_graph_nodes() {
+        let remote = [ref_item(HistoryRefListItemKind::RemoteBranch {
+            name: "origin/develop".to_string(),
+        })];
+        assert!(history_row_has_branch_tip(&remote));
+
+        let detached = [ref_item(HistoryRefListItemKind::DetachedHead)];
+        assert!(history_row_has_branch_tip(&detached));
+
+        let tag = [ref_item(HistoryRefListItemKind::Tag {
+            name: "v1.0".to_string(),
+        })];
+        assert!(!history_row_has_branch_tip(&tag));
+        assert!(!history_row_has_branch_tip(&[]));
     }
 
     #[test]

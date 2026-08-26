@@ -77,7 +77,24 @@ Graph emphasis is independently configurable under `Settings > Git Log`:
 - special commit nodes: plain dots, small 7pt discs with 4.5pt glyphs (default),
   or the original detailed 16pt GitComet symbols. Pictograms appear only on
   merge and stash commits; ordinary commits remain dots. The small symbols leave
-  clear space inside the measured 11pt lane pitch.
+  clear space inside the measured 11pt lane pitch. The SourceTree review
+  preview uses plain dots so a branch tip remains an unambiguous endpoint even
+  when that commit is also a merge;
+- the checked-out `HEAD` commit keeps its quiet row tint and ref chip, and its
+  summary is semibold so it remains visible in a dense all-branches graph;
+- local, remote and checked-out branch tips use a slightly larger terminal dot
+  in plain-dots mode plus a row-background halo that visibly interrupts the
+  vertical lane, so the endpoint cannot be mistaken for a rounded lane cap;
+- in date-ordered history, the checked-out branch lane begins at its actual
+  `HEAD` commit. It is never pre-drawn through newer unrelated rows merely to
+  reserve the leftmost column;
+- curved and horizontal node-to-node segments represent commit parentage. A
+  vertical lane may pass through rows from unrelated branches because the
+  selected date/topology ordering interleaves commits; without a node junction
+  it does not claim a relationship to that row. A branch ref whose tip is
+  already reached by another lane keeps its own colour as metadata for
+  highlighting and worktree bands, but is represented by the same single
+  haloed commit node. Ref decoration never adds a fake node or parent edge.
 
 The UI family remains selectable under `Settings > General > UI Font`.
 `UI font size` is independently selectable from 11–24px, while

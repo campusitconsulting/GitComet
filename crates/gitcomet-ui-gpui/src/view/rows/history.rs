@@ -3219,6 +3219,7 @@ fn history_table_row(
         summary,
         when,
         short_sha,
+        is_head,
         row_bg_overlay,
         if context_menu_active {
             theme.colors.interaction.pressed_background

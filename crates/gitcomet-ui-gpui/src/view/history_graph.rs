@@ -95,6 +95,10 @@ pub struct GraphRow {
     pub lanes_next: LanePaints,
     pub joins_in: GraphEdges,
     pub edges_out: GraphEdges,
+    /// Branch colour to use for a ref ending on a commit already reached by a
+    /// descendant lane. Metadata only: the UI keeps one commit node rather than
+    /// drawing a second, commit-like terminal dot beside it.
+    pub ref_tip_color_ix: Option<LaneColorIx>,
     pub node_col: u16,
     /// Colour of the node dot. Not derivable from `lanes_now[node_col]`: when a
     /// branch head takes over its own lane, the segment *above* the node keeps
@@ -253,6 +257,7 @@ fn compute_linear_visible_history_fast_path<C: GraphCommitLike>(
                 lanes_next: LanePaints::new(),
                 joins_in: GraphEdges::new(),
                 edges_out: GraphEdges::new(),
+                ref_tip_color_ix: None,
                 node_col: 0,
                 node_color_ix: 0,
                 is_merge: false,
@@ -278,6 +283,7 @@ fn compute_linear_visible_history_fast_path<C: GraphCommitLike>(
             lanes_next: single_lane_paints(next_lane),
             joins_in: GraphEdges::new(),
             edges_out: GraphEdges::new(),
+            ref_tip_color_ix: None,
             node_col: 0,
             node_color_ix: 0,
             is_merge: false,
@@ -293,6 +299,7 @@ fn compute_linear_visible_history_fast_path<C: GraphCommitLike>(
         lanes_next: LanePaints::new(),
         joins_in: GraphEdges::new(),
         edges_out: GraphEdges::new(),
+        ref_tip_color_ix: None,
         node_col: 0,
         node_color_ix: 0,
         is_merge: false,
@@ -389,22 +396,6 @@ where
     // segment is still drawn above the node, so a new lane reusing the colour
     // would read as a continuation of the lane that just ended.
     let mut ended_colors: SmallVec<[LaneColorIx; 4]> = SmallVec::new();
-    let mut seeded_main_lane_pending = false;
-
-    if let Some(main_target_ix) = main_target_ix {
-        let id = LaneId(next_id);
-        next_id += 1;
-        lanes.push(Some(LaneState {
-            id,
-            color_ix: 0,
-            target_ix: main_target_ix,
-            carried_in: false,
-            home_col: 0,
-        }));
-        main_lane_id = Some(id);
-        next_color = 1;
-        seeded_main_lane_pending = true;
-    }
 
     let mut pick_lane_color_ix =
         |lanes: &[Option<LaneState>], avoid: &[LaneColorIx]| -> LaneColorIx {
@@ -473,6 +464,17 @@ where
             hits.push(col);
         }
 
+        // Do not pre-seed the active HEAD lane above its actual commit. In a
+        // date-ordered all-branches log that produced a leftmost vertical line
+        // entering from nowhere and crossing unrelated newer rows. Designate
+        // the lane only when the HEAD commit itself is reached.
+        if main_lane_id.is_none()
+            && main_target_ix == Some(commit_ix)
+            && let Some(&col) = hits.first()
+        {
+            main_lane_id = lane_at(&lanes, col).map(|lane| lane.id);
+        }
+
         // If a branch head points at a commit that's already reached by another lane (i.e. the
         // branch is behind some other branch), split a new lane at this row so the head has its
         // own lane/color instead of inheriting the descendant lane's color.
@@ -498,11 +500,11 @@ where
             hits.first().copied().unwrap_or(0)
         };
 
-        // The branch-head fork is drawn as a paint-only "whisker": a column that
-        // exists on this row alone, joining into the node. It never becomes a
-        // `LaneState`, so it cannot displace a live lane.
+        // When a branch head is behind another branch, retain its own colour as
+        // ref metadata. The renderer deliberately keeps a single haloed commit
+        // node: a second terminal dot looked like a second commit.
         //
-        // When the head also takes over the continuation below the node
+        // When the head takes over the continuation below the node
         // (`adopt_fork_color`), that is modelled as the old lane dying and a new
         // one being born *in the same column* -- which is what actually happens
         // -- rather than as a swap. `lanes_now` has already been snapshotted with
@@ -510,38 +512,18 @@ where
         // descendant's colour and everything below it is the head's.
         let fork_color_ix =
             force_branch_head_lane.then(|| pick_lane_color_ix(&lanes, &ended_colors));
-        // The whisker only marks the head where it can sit immediately beside
-        // the node. Reaching on to the next free column would draw a horizontal
-        // straight across whatever live lanes lie between, which reads as a
-        // stray line belonging to one of them rather than as a marker for this
-        // head. The colour hand-over below does not depend on it.
-        let fork = fork_color_ix.and_then(|color_ix| {
-            let col = node_col + 1;
-            lane_at(&lanes, col).is_none().then_some((col, color_ix))
-        });
+        let ref_tip_color_ix = fork_color_ix;
         let adopt_fork_color = force_branch_head_lane && !only_hit_is_main_lane;
 
         // Snapshot of lanes used for drawing this row. Dense over columns, so
         // holes are represented explicitly and the painter can keep using the
         // column index as the array index.
-        let suppress_main_incoming = seeded_main_lane_pending && main_target_ix == Some(commit_ix);
-        let now_len = lanes.len().max(fork.map_or(0, |(col, _)| col + 1));
+        let now_len = lanes.len();
         let mut lanes_now = LanePaints::with_capacity(now_len);
         for col in 0..now_len {
             lanes_now.push(match lane_at(&lanes, col) {
-                Some(lane) => LanePaint::lane(
-                    lane.color_ix,
-                    lane.carried_in
-                        && !(suppress_main_incoming
-                            && main_lane_id.is_some_and(|mid| lane.id == mid)),
-                    false,
-                ),
-                None => match fork {
-                    Some((fork_col, color_ix)) if fork_col == col => {
-                        LanePaint::lane(color_ix, false, false)
-                    }
-                    _ => LanePaint::HOLE,
-                },
+                Some(lane) => LanePaint::lane(lane.color_ix, lane.carried_in, false),
+                None => LanePaint::HOLE,
             });
         }
 
@@ -553,8 +535,7 @@ where
         node_col = hits.first().copied().unwrap_or(node_col);
 
         // Incoming join edges: other lanes that were targeting this commit join into the node.
-        let mut joins_in =
-            GraphEdges::with_capacity(hits.len().saturating_sub(1) + usize::from(fork.is_some()));
+        let mut joins_in = GraphEdges::with_capacity(hits.len().saturating_sub(1));
         for &col in hits.iter().skip(1) {
             joins_in.push(GraphEdge {
                 from_col: lane_col(col),
@@ -562,14 +543,6 @@ where
                 color_ix: lane_at(&lanes, col).map_or(0, |l| l.color_ix),
             });
         }
-        if let Some((fork_col, color_ix)) = fork {
-            joins_in.push(GraphEdge {
-                from_col: lane_col(fork_col),
-                to_col: lane_col(node_col),
-                color_ix,
-            });
-        }
-
         // The node's colour: the fork colour when the branch head takes over the
         // lane, otherwise the colour of the lane the node sits on.
         let node_color_ix = match fork_color_ix {
@@ -697,12 +670,11 @@ where
             lanes_next,
             joins_in,
             edges_out,
+            ref_tip_color_ix,
             node_col: lane_col(node_col),
             node_color_ix,
             is_merge,
         });
-
-        seeded_main_lane_pending = false;
     }
 
     rows
@@ -799,13 +771,11 @@ mod tests {
         assert_ne!(c0, c1);
     }
 
-    /// The whisker marks a head that is behind, but only where it can sit right
-    /// beside the node. With a live lane in that column it would have to run
-    /// horizontally across it to reach the next free one, which reads as a stray
-    /// line belonging to that lane -- the shape a `main` sitting on the trunk
-    /// with `upstream/main` alongside produces.
+    /// A behind branch head must never invent a horizontal edge. Its ref chip
+    /// marks the tip and its lane changes colour below the node; every drawn
+    /// join remains a real ancestry relationship.
     #[test]
-    fn a_behind_head_gets_no_whisker_when_it_would_cross_a_live_lane() {
+    fn a_behind_head_never_gets_a_synthetic_whisker() {
         let theme = AppTheme::gitcomet_dark();
         // `side` keeps a lane alive in the column right of the trunk while
         // `shared` -- a branch head -- sits on the trunk itself.
@@ -822,7 +792,7 @@ mod tests {
         assert!(
             shared_row.joins_in.iter().all(|edge| {
                 // Every join here comes from a lane that genuinely reaches this
-                // commit, not from a whisker conjured beside it.
+                // commit, never from a marker conjured beside it.
                 shared_row
                     .lanes_now
                     .get(usize::from(edge.from_col))
@@ -830,10 +800,11 @@ mod tests {
             }),
             "a whisker must not be drawn across the lane sitting beside the node"
         );
+        assert_eq!(shared_row.node_col, 0);
     }
 
     #[test]
-    fn branch_heads_split_off_new_lane_when_behind() {
+    fn behind_head_on_main_lane_keeps_one_commit_node() {
         let theme = AppTheme::gitcomet_dark();
         let commits = vec![
             commit("new1", vec!["base"]),
@@ -845,14 +816,14 @@ mod tests {
         let graph = compute_graph(&commits, theme, branch_heads, None);
 
         let base_row = &graph[1];
-        assert_eq!(base_row.lanes_now.len(), 2);
+        assert_eq!(base_row.lanes_now.len(), 1);
         assert!(base_row.lanes_now[0].incoming());
-        assert!(!base_row.lanes_now[1].incoming());
-        assert_eq!(base_row.joins_in.len(), 1);
+        assert!(base_row.joins_in.is_empty());
         assert_eq!(base_row.node_col, 0);
-        assert_ne!(
-            base_row.lanes_now[0].color_ix,
-            base_row.lanes_now[1].color_ix
+        assert!(base_row.ref_tip_color_ix.is_some());
+        assert_eq!(
+            base_row.lanes_now[0].color_ix, base_row.node_color_ix,
+            "the existing lane keeps its colour without a synthetic node"
         );
 
         assert_eq!(base_row.lanes_next.len(), 1);
@@ -881,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn active_head_lane_stays_leftmost_even_when_head_commit_appears_later() {
+    fn active_head_lane_starts_at_head_commit_not_above_it() {
         let theme = AppTheme::gitcomet_dark();
         let commits = vec![
             commit("feature2", vec!["base"]),
@@ -893,15 +864,11 @@ mod tests {
         let branch_heads = ["feature2", "main2"];
         let graph = compute_graph(&commits, theme, branch_heads, Some("main2"));
 
-        let seeded_lane = graph[0].lanes_now[0].color_ix;
-        assert_eq!(graph[0].lanes_now.len(), 2);
-        assert!(graph[0].lanes_now[0].incoming());
-        assert!(!graph[0].lanes_now[1].incoming());
-        assert_eq!(graph[0].node_col, 1);
-        assert_eq!(graph[1].node_col, 0);
-        assert_eq!(graph[2].node_col, 0);
-        assert_eq!(graph[1].lanes_now[0].color_ix, seeded_lane);
-        assert_eq!(graph[2].lanes_now[0].color_ix, seeded_lane);
+        assert_eq!(graph[0].lanes_now.len(), 1);
+        assert!(!graph[0].lanes_now[0].incoming());
+        assert_eq!(graph[0].node_col, 0);
+        assert_eq!(graph[1].node_col, 1);
+        assert_eq!(graph[2].node_col, 1);
     }
 
     #[test]
@@ -918,7 +885,7 @@ mod tests {
 
         let merge_row = &graph[0];
         assert_eq!(merge_row.lanes_next.len(), 2);
-        assert!(!merge_row.lanes_next[0].starts_at_node());
+        assert!(merge_row.lanes_next[0].starts_at_node());
         assert!(merge_row.lanes_next[1].starts_at_node());
         assert!(merge_row.edges_out.is_empty());
     }
@@ -964,7 +931,7 @@ mod tests {
     }
 
     #[test]
-    fn active_head_target_later_in_linear_history_still_uses_seeded_lane() {
+    fn active_head_target_later_in_linear_history_has_no_phantom_prefix() {
         let theme = AppTheme::gitcomet_dark();
         let commits = vec![
             commit("feature", vec!["main"]),
@@ -974,8 +941,9 @@ mod tests {
 
         let graph = compute_graph(&commits, theme, std::iter::empty::<&str>(), Some("main"));
 
-        assert_eq!(graph[0].lanes_now.len(), 2);
-        assert_eq!(graph[0].node_col, 1);
+        assert_eq!(graph[0].lanes_now.len(), 1);
+        assert!(!graph[0].lanes_now[0].incoming());
+        assert_eq!(graph[0].node_col, 0);
         assert_eq!(graph[1].node_col, 0);
     }
 
@@ -1257,7 +1225,7 @@ mod tests {
     }
 
     #[test]
-    fn branch_head_fork_keeps_the_node_column() {
+    fn branch_head_color_handover_keeps_a_single_node_column() {
         let theme = AppTheme::gitcomet_dark();
         let commits = vec![
             commit("main_tip", vec!["base"]),
@@ -1270,21 +1238,16 @@ mod tests {
         let graph = compute_graph(&commits, theme, ["feat_mid"], None);
 
         // `feat_mid` is a branch head sitting on a lane it does not own, so it
-        // takes the lane over. The node stays in the lane's own column and the
-        // fork is a paint-only whisker to its right -- previously this swapped
-        // two live lanes and drew the node right of every continuing lane.
+        // takes the lane over. The single node stays in the lane's own column;
+        // the ref colour is metadata, not a second visible node.
         let row = &graph[2];
         assert_eq!(row.node_col, 1);
-        assert_eq!(row.lanes_now.len(), 3);
-        assert!(row.lanes_now[2].is_active());
-        assert!(!row.lanes_now[2].incoming());
-        assert_eq!(row.joins_in.len(), 1);
-        assert_eq!(row.joins_in[0].from_col, 2);
-        assert_eq!(row.joins_in[0].to_col, 1);
+        assert_eq!(row.lanes_now.len(), 2);
+        assert!(row.joins_in.is_empty());
+        assert_eq!(row.ref_tip_color_ix, Some(row.node_color_ix));
 
         // The node and everything below it wear the head's new colour, while the
         // segment above the node keeps the descendant lane's colour.
-        assert_eq!(row.node_color_ix, row.joins_in[0].color_ix);
         assert_eq!(row.lanes_next[1].color_ix, row.node_color_ix);
         assert_ne!(row.lanes_now[1].color_ix, row.node_color_ix);
 
