@@ -132,13 +132,30 @@ fn history_chip_visual(theme: AppTheme, kind: HistoryChipStyleKind) -> HistoryCh
             text: theme.colors.accent.foreground,
         },
         HistoryChipStyleKind::ComparisonA => HistoryChipVisual {
-            border: with_alpha(theme.colors.accent.foreground, 0.90),
-            bg: with_alpha(theme.colors.accent.foreground, 0.08),
+            // Canvas quads don't composite translucent fills the same way as
+            // GPUI layout elements. Flatten against the popup's raised surface
+            // so this manual painter is pixel-equivalent to
+            // `components::comparison_endpoint_badge`, including on a selected
+            // history row in the light theme.
+            border: crate::theme::composite_over(
+                theme.colors.surface.raised,
+                with_alpha(theme.colors.accent.foreground, 0.90),
+            ),
+            bg: crate::theme::composite_over(
+                theme.colors.surface.raised,
+                with_alpha(theme.colors.accent.foreground, 0.08),
+            ),
             text: theme.colors.accent.foreground,
         },
         HistoryChipStyleKind::ComparisonB => HistoryChipVisual {
-            border: with_alpha(theme.colors.status.warning.foreground, 0.90),
-            bg: with_alpha(theme.colors.status.warning.foreground, 0.08),
+            border: crate::theme::composite_over(
+                theme.colors.surface.raised,
+                with_alpha(theme.colors.status.warning.foreground, 0.90),
+            ),
+            bg: crate::theme::composite_over(
+                theme.colors.surface.raised,
+                with_alpha(theme.colors.status.warning.foreground, 0.08),
+            ),
             text: theme.colors.status.warning.foreground,
         },
         // The HEAD chip carries no selection state: a ring around a pill that is
@@ -1557,6 +1574,33 @@ mod tests {
                 history_summary_color(theme, false, None, 35),
                 theme.colors.foreground.primary
             );
+        }
+    }
+
+    #[test]
+    fn canvas_comparison_badges_match_popup_alpha_composition() {
+        for theme in [AppTheme::gitcomet_dark(), AppTheme::gitcomet_light()] {
+            let a = history_chip_visual(theme, HistoryChipStyleKind::ComparisonA);
+            let b = history_chip_visual(theme, HistoryChipStyleKind::ComparisonB);
+
+            assert_eq!(
+                a.bg,
+                crate::theme::composite_over(
+                    theme.colors.surface.raised,
+                    with_alpha(theme.colors.accent.foreground, 0.08),
+                )
+            );
+            assert_eq!(
+                b.bg,
+                crate::theme::composite_over(
+                    theme.colors.surface.raised,
+                    with_alpha(theme.colors.status.warning.foreground, 0.08),
+                )
+            );
+            assert_ne!(a.bg, a.text, "A must not render blue on blue");
+            assert_ne!(b.bg, b.text, "B must not render orange on orange");
+            assert_eq!(a.bg.alpha, theme.colors.surface.raised.alpha);
+            assert_eq!(b.bg.alpha, theme.colors.surface.raised.alpha);
         }
     }
 
