@@ -34,6 +34,7 @@ pub struct PickerPrompt {
     tooltip_host: Option<WeakEntity<TooltipHost>>,
     selected_index: Option<usize>,
     marked_index: Option<usize>,
+    marked_badge: Option<super::ContextMenuComparisonBadge>,
     leading_icon: Option<&'static str>,
     selected_hint: Option<SharedString>,
     accent_selection: bool,
@@ -488,6 +489,7 @@ impl PickerPrompt {
             tooltip_host: None,
             selected_index: None,
             marked_index: None,
+            marked_badge: None,
             leading_icon: None,
             selected_hint: None,
             accent_selection: false,
@@ -542,6 +544,11 @@ impl PickerPrompt {
     /// e.g. the currently checked-out branch in the branch picker.
     pub fn marked_index(mut self, ix: Option<usize>) -> Self {
         self.marked_index = ix;
+        self
+    }
+
+    pub fn marked_badge(mut self, badge: Option<super::ContextMenuComparisonBadge>) -> Self {
+        self.marked_badge = badge;
         self
     }
 
@@ -801,8 +808,15 @@ impl PickerPrompt {
                 let has_initials = row_initials.is_some();
                 let is_selected = selected_index == Some(display_ix);
                 let is_marked = self.marked_index == Some(original_index);
+                let marked_badge = is_marked.then_some(self.marked_badge).flatten();
                 let row_icon = (!has_initials)
-                    .then(|| row_leading_icon(&self.items[original_index], leading_icon, is_marked))
+                    .then(|| {
+                        row_leading_icon(
+                            &self.items[original_index],
+                            leading_icon,
+                            is_marked && marked_badge.is_none(),
+                        )
+                    })
                     .flatten();
                 let is_removable = self.items[original_index].removable;
                 // Only the remove button reveals itself on row hover, so only
@@ -863,7 +877,7 @@ impl PickerPrompt {
                     .child(div().flex_1().min_w(px(0.0)).child(label))
                     // Only rows with repository initials still need this: they have
                     // no icon slot to turn into a check.
-                    .when(is_marked && has_initials, |row| {
+                    .when(is_marked && has_initials && marked_badge.is_none(), |row| {
                         row.child(
                             div()
                                 .flex_shrink_0()
@@ -876,6 +890,12 @@ impl PickerPrompt {
                                     theme.colors.accent.foreground,
                                     scaled_px(12.0),
                                 )),
+                        )
+                    })
+                    .when_some(marked_badge, |row, badge| {
+                        row.child(
+                            super::comparison_endpoint_badge(theme, ui_scale, badge)
+                                .flex_shrink_0(),
                         )
                     })
                     .when(is_selected, |row| {

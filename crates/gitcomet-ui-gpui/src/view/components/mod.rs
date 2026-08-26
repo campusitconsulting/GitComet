@@ -30,8 +30,8 @@ pub use containers::{ScrollContainer, empty_state, empty_state_message, split_co
 pub use containers::{panel, pill};
 pub use context_menu::{
     ContextMenuComparisonBadge, ContextMenuEntry, ContextMenuIconSlot, ContextMenuText,
-    context_menu, context_menu_description, context_menu_header, context_menu_label,
-    context_menu_separator,
+    comparison_endpoint_badge, context_menu, context_menu_description, context_menu_header,
+    context_menu_label, context_menu_separator,
 };
 pub use diff_stat::diff_stat;
 pub use interactive_row::{

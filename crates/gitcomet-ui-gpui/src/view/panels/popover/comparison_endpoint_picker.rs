@@ -364,8 +364,27 @@ pub(super) fn panel(
         ComparisonSlot::A => "A",
         ComparisonSlot::B => "B",
     };
+    let slot_badge = match slot {
+        ComparisonSlot::A => components::ContextMenuComparisonBadge::A,
+        ComparisonSlot::B => components::ContextMenuComparisonBadge::B,
+    };
     let content = div()
-        .child(popover_title(format!("Choose comparison {slot_name}")))
+        .child(
+            div()
+                .px_2()
+                .py_1()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .font_weight(FontWeight::BOLD)
+                .child(components::comparison_endpoint_badge(
+                    theme,
+                    ui_scale_percent,
+                    slot_badge,
+                ))
+                .child(format!("Choose comparison {slot_name}")),
+        )
         .child(div().border_t_1().border_color(theme.colors.stroke.default))
         .child(
             components::PickerPrompt::new(search, this.picker_prompt_scroll.clone())
@@ -375,6 +394,7 @@ pub(super) fn panel(
                 .max_height(scaled_px(LIST_MAX_HEIGHT_PX))
                 .selected_index(this.comparison_endpoint_selected_index)
                 .marked_index(built.marked_index)
+                .marked_badge(Some(slot_badge))
                 .render(
                     theme,
                     ui_scale_percent,

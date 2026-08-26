@@ -99,6 +99,33 @@ pub enum ContextMenuComparisonBadge {
     B,
 }
 
+pub fn comparison_endpoint_badge(
+    theme: AppTheme,
+    ui_scale: impl Into<UiScale>,
+    badge: ContextMenuComparisonBadge,
+) -> Div {
+    let ui_scale = ui_scale.into();
+    let scaled_px = |value| ui_scale.px(value);
+    let (label, color) = match badge {
+        ContextMenuComparisonBadge::A => ("A", theme.colors.accent.foreground),
+        ContextMenuComparisonBadge::B => ("B", theme.colors.status.warning.foreground),
+    };
+    div()
+        .h(scaled_px(18.0))
+        .min_w(scaled_px(18.0))
+        .px(scaled_px(5.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(scaled_px(5.0))
+        .border_1()
+        .border_color(crate::theme::with_alpha(color, 0.90))
+        .bg(crate::theme::with_alpha(color, 0.08))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(color)
+        .child(label)
+}
+
 pub fn context_menu(theme: AppTheme, content: impl IntoElement) -> Div {
     div()
         .w_full()
@@ -405,26 +432,7 @@ fn context_menu_entry<V: 'static>(
         .text_color(theme.colors.foreground.secondary);
 
     if let Some(badge) = comparison_badge {
-        let (label, color) = match badge {
-            ContextMenuComparisonBadge::A => ("A", theme.colors.accent.foreground),
-            ContextMenuComparisonBadge::B => ("B", theme.colors.status.warning.foreground),
-        };
-        end = end.child(
-            div()
-                .h(scaled_px(18.0))
-                .min_w(scaled_px(18.0))
-                .px(scaled_px(5.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(scaled_px(5.0))
-                .border_1()
-                .border_color(crate::theme::with_alpha(color, 0.90))
-                .bg(crate::theme::with_alpha(color, 0.08))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(color)
-                .child(label),
-        );
+        end = end.child(comparison_endpoint_badge(theme, ui_scale, badge));
     }
 
     if let Some(shortcut) = shortcut {
